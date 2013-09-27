@@ -5,6 +5,8 @@ common functions for scoring systems
 ## use float division instead of integer division
 from __future__ import division
 from collections import defaultdict
+import sys
+import json
 
 def getMedian(numericValues):
     '''
@@ -160,18 +162,32 @@ def find_max_scores(Scores):
     find the maximum of each type of metric across all cutoffs
     '''
     max_scores = defaultdict(dict)
-    
+
+    ## integrity check used below
+    at_least_some_scores = False
+
     ## Store top F, SU for each target_id, which takes special value
     ## of "average" thereby appling the same cutoff for all entities.
     for target_id in Scores:
         for metric in ['P', 'R', 'F', 'SU']:
+            if not Scores[target_id]:
+                max_scores[target_id][metric] = 0
+                continue
+            at_least_some_scores = True
             max_scores[target_id][metric] =  \
                 max([Scores[target_id][cutoff][metric]
                      for cutoff in Scores[target_id]])
 
-    max_scores['average']['F_recomputed'] = \
-        max([fscore(Scores['average'][cutoff]['P'], 
-                    Scores['average'][cutoff]['R'])
-             for cutoff in Scores['average']])
+    if not Scores['average']:
+        if at_least_some_scores:
+            print 'how did we get no average when there are at_least_some_scores?'
+            sys.exit(json.dumps(Scores, indent=4, sort_keys=True))
+        else:
+            max_scores['average']['F_recomputed'] = 0
+    else:
+        max_scores['average']['F_recomputed'] = \
+            max([fscore(Scores['average'][cutoff]['P'], 
+                        Scores['average'][cutoff]['R'])
+                 for cutoff in Scores['average']])
 
     return max_scores

@@ -66,7 +66,7 @@ def write_performance_metrics(path_to_write_csv, CM, Scores):
                              Scores[target_id][cutoff]['F'], Scores[target_id][cutoff]['SU']])
 
 
-def write_team_summary(team_scores):
+def write_team_summary(mode, team_scores):
     '''
     Writes a CSV file with the max, average, median and min F and SU for each teams run
     
@@ -74,7 +74,7 @@ def write_team_summary(team_scores):
     team_scores: dict, contains the F and SU for each run of each team
     '''
 
-    run_writer = csv.writer(open('run-overview.csv', 'wb'), delimiter=',')
+    run_writer = csv.writer(open('%s-run-overview.csv' % mode, 'wb'), delimiter=',')
     ## Write a header
     run_writer.writerow(['team_id', 'system_id','maxF', 'maxF_recomputed', 'maxSU'])
 
@@ -93,7 +93,7 @@ def write_team_summary(team_scores):
             for target_id, subval in val.items():
                 flipped_ts[target_id][team_id + '-' + system_id] = subval
 
-    url_writer = csv.writer(open('target_id-overview.csv', 'wb'), delimiter=',')
+    url_writer = csv.writer(open('%s-target_id-overview.csv' % mode, 'wb'), delimiter=',')
     ## Write a header
     url_writer.writerow(['target_id',
                      'maxF', 'medianF', 'meanF', 'minF',
@@ -120,3 +120,7 @@ def write_team_summary(team_scores):
                                  for team_system_id in flipped_ts[target_id]])
              ])
 
+
+def log(m):
+    print m
+    sys.stdout.flush()

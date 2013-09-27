@@ -30,7 +30,7 @@ except ImportError:
 from collections import defaultdict
 
 from kba.scorer._metrics import getMedian, performance_metrics, full_run_metrics, find_max_scores
-from kba.scorer._outputs import write_team_summary, write_graph, write_performance_metrics
+from kba.scorer._outputs import write_team_summary, write_graph, write_performance_metrics, log
 
 def score_confusion_matrix(path_to_run_file, annotation, cutoff_step, unannotated_is_TN, include_training, debug):
     '''
@@ -150,12 +150,14 @@ def score_confusion_matrix(path_to_run_file, annotation, cutoff_step, unannotate
 
     return CM
     
-def load_annotation (path_to_annotation_file, include_useful, include_neutral):
+def load_annotation(path_to_annotation_file, include_useful, include_neutral, reject):
     '''
     Loads the annotation file into a dict
     
     path_to_annotation_file: string filesystem path to the annotation file
     include_useful: true to include docs marked useful and vital
+
+    reject:  callable that returns boolean given a target_id
     '''
     annotation_file = csv.reader(open(path_to_annotation_file, 'r'), delimiter='\t')
 
@@ -168,7 +170,11 @@ def load_annotation (path_to_annotation_file, include_useful, include_neutral):
        stream_id = row[2]
        target_id = row[3]
        rating = int(row[5])
-       
+
+       if reject(target_id):
+           log('excluding truth data for %s' % target_id)
+           continue
+
        if include_neutral:
            thresh = 0
        elif include_useful:
@@ -188,10 +194,6 @@ def load_annotation (path_to_annotation_file, include_useful, include_neutral):
            annotation[(stream_id, target_id)] = rating >= thresh 
     
     return annotation
-
-def log(m):
-    print m
-    sys.stdout.flush()
             
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__, usage=__usage__)
@@ -218,12 +220,26 @@ if __name__ == '__main__':
         '--include-training', default=False, action='store_true', dest='include_training',
         help='includes documents from before the ETR period')
     parser.add_argument(
+        '--reject-twitter', default=False, action='store_true', 
+        help='exclude twitter entities from the truth data')
+    parser.add_argument(
+        '--reject-wikipedia', default=False, action='store_true', 
+        help='exclude twitter entities from the truth data')
+    parser.add_argument(
         '--debug', default=False, action='store_true', dest='debug',
         help='print out debugging diagnostics')
     args = parser.parse_args()
- 
+
+    ## construct reject callable
+    def reject(target_id):
+        if args.reject_twitter and 'twitter.com' in target_id:
+            return True
+        if args.reject_wikipedia and 'wikipedia.org' in target_id:
+            return True
+        return False
+
     ## Load in the annotation data
-    annotation = load_annotation(args.annotation, args.include_useful, args.include_neutral)
+    annotation = load_annotation(args.annotation, args.include_useful, args.include_neutral, reject)
     log( 'This assumes that all run file names end in .gz' )
 
     team_scores = defaultdict(lambda: defaultdict(dict))
@@ -274,4 +290,4 @@ if __name__ == '__main__':
             log( ' wrote plot image to %s' % graph_filepath )
 
     ## When folder is finished running output a high level summary of the scores to overview.csv
-    write_team_summary(team_scores)
+    write_team_summary('ccr', team_scores)
