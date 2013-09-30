@@ -150,7 +150,7 @@ def score_confusion_matrix(path_to_run_file, annotation, cutoff_step, unannotate
 
     return CM
     
-def load_annotation(path_to_annotation_file, include_useful, include_neutral, reject):
+def load_annotation(path_to_annotation_file, include_useful, include_neutral, min_len_clean_visible, reject):
     '''
     Loads the annotation file into a dict
     
@@ -170,6 +170,18 @@ def load_annotation(path_to_annotation_file, include_useful, include_neutral, re
        stream_id = row[2]
        target_id = row[3]
        rating = int(row[5])
+
+       if len(row) == 12:
+           ## only the later versions of the truth data carried this
+           ## twelve column for excluding documents with insufficient
+           ## clean_visible to be judged.  We use a default cutoff of
+           ## 100 bytes which means removing these counts below:
+           #              (stream_id, target_id) pairs:  34921 above, and 15767 below 100 bytes of clean_visible
+           # (assessor_id, stream_id, target_id) pairs:  47446 above, and 19948 below 100 bytes of clean_visible
+           len_clean_visible = int(row[11])
+           if len_clean_visible < min_len_clean_visible:
+               log('excluding stream_id=%s for len(clean_visible)=%d' % (stream_id, len_clean_visible))
+               continue
 
        if reject(target_id):
            log('excluding truth data for %s' % target_id)
@@ -192,54 +204,57 @@ def load_annotation(path_to_annotation_file, include_useful, include_neutral, re
        else:
            ## store bool values in the annotation index
            annotation[(stream_id, target_id)] = rating >= thresh 
-    
+
+    num_true = sum(map(int, annotation.values()))
+    log('loaded annotation to create a dict of %d (stream_id, target_id) pairs with %d True' % (len(annotation), num_true))
+    if num_true == 0:
+        sys.exit('found no true positives given the filters')
     return annotation
-            
-if __name__ == '__main__':
-    parser = argparse.ArgumentParser(description=__doc__, usage=__usage__)
-    parser.add_argument(
-        'run_dir', 
-        help='path to the directory containing run files')
-    parser.add_argument('annotation', help='path to the annotation file')
-    parser.add_argument(
-        '--cutoff-step', type=int, default=50, dest = 'cutoff_step',
-        help='step size used in computing scores tables and plots')
-    parser.add_argument(
-        '--unannotated-is-true-negative', default=False, action='store_true', dest='unan_is_true',
-        help='compute scores using assumption that all unjudged documents are true negatives, i.e. that the system used to feed tasks to assessors in June 2012 had perfect recall.  Default is to not assume this and only consider (stream_id, target_id) pairs that were judged.')
-    parser.add_argument(
-        '--use-micro-averaging', default=False, action='store_true', dest='use_micro_averaging',
-        help='compute scores for each mention and then average regardless of entity.  Default is macro averaging')
-    parser.add_argument(
-        '--include-useful', default=False, action='store_true', dest='include_useful',
-        help='in addition to documents rated vital, also include those rated useful')
-    parser.add_argument(
-        '--include-neutral', default=False, action='store_true', dest='include_neutral',
-        help='in addition to documents rated vital, and useful also include those rated neutral')
-    parser.add_argument(
-        '--include-training', default=False, action='store_true', dest='include_training',
-        help='includes documents from before the ETR period')
-    parser.add_argument(
-        '--reject-twitter', default=False, action='store_true', 
-        help='exclude twitter entities from the truth data')
-    parser.add_argument(
-        '--reject-wikipedia', default=False, action='store_true', 
-        help='exclude twitter entities from the truth data')
-    parser.add_argument(
-        '--debug', default=False, action='store_true', dest='debug',
-        help='print out debugging diagnostics')
-    args = parser.parse_args()
 
-    ## construct reject callable
-    def reject(target_id):
-        if args.reject_twitter and 'twitter.com' in target_id:
-            return True
-        if args.reject_wikipedia and 'wikipedia.org' in target_id:
-            return True
-        return False
+def make_description(args):
+    ## Output the key performance statistics
+    if args.reject_wikipedia and not args.reject_twitter:
+        entities = '-twitter-only'
+    elif args.reject_twitter and not args.reject_wikipedia:
+        entities = '-wikipedia-only'
+    elif args.group:
+        entities = '-' + args.group + '-only'
+    else:
+        assert not (args.reject_wikipedia and args.reject_twitter), \
+            'cannot score with no entities'
+        entities = '-all-entities'
 
+    if args.use_micro_averaging:
+        avg = '-microavg'
+    else:
+        avg = '-macroavg'
+
+    rating_types = '-vital'
+    if args.include_useful:
+        rating_types += '+useful'
+    elif args.include_neutral:
+        rating_types += '+neutral'
+
+    description = 'ccr' \
+            + entities \
+            + rating_types \
+            + avg \
+            + '-cutoff-step-size-' \
+            + str(args.cutoff_step)
+
+    return description
+
+def score_all_runs(args, description, reject):
+    '''
+    score all the runs in the specified runs dir using the various
+    filters and configuration settings
+
+    :param description: string used for file names
+    :param reject: callable to rejects truth data
+    '''
     ## Load in the annotation data
-    annotation = load_annotation(args.annotation, args.include_useful, args.include_neutral, reject)
+    annotation = load_annotation(args.annotation, args.include_useful, args.include_neutral, 
+                                 args.min_len_clean_visible, reject)
     log( 'This assumes that all run file names end in .gz' )
 
     team_scores = defaultdict(lambda: defaultdict(dict))
@@ -274,9 +289,10 @@ if __name__ == '__main__':
         log( '   max(F_1(avg(P), avg(R))): %.3f' % max_scores['average']['F_recomputed'] )
         log( '   max(avg(SU)):  %.3f' % max_scores['average']['SU'] )
         
-        ## Output the key performance statistics
-        base_output_filepath = os.path.join(args.run_dir, run_file_name + '-cutoff-step-size-'\
-                                                + str(args.cutoff_step))
+        base_output_filepath = os.path.join(
+            args.run_dir, 
+            run_file_name + '-' + description)
+
         output_filepath = base_output_filepath + '.csv'
         write_performance_metrics(output_filepath, CM, Scores)
         log( ' wrote metrics table to %s' % output_filepath )
@@ -290,4 +306,75 @@ if __name__ == '__main__':
             log( ' wrote plot image to %s' % graph_filepath )
 
     ## When folder is finished running output a high level summary of the scores to overview.csv
-    write_team_summary('ccr', team_scores)
+    write_team_summary(description, team_scores)
+            
+if __name__ == '__main__':
+    parser = argparse.ArgumentParser(description=__doc__, usage=__usage__)
+    parser.add_argument(
+        'run_dir', 
+        help='path to the directory containing run files')
+    parser.add_argument('annotation', help='path to the annotation file')
+    parser.add_argument(
+        '--min-len-clean-visible', type=int, default=100, 
+        help='minimum length of clean_visible content for a stream_id to be included in truth data')
+    parser.add_argument(
+        '--cutoff-step', type=int, default=50, dest = 'cutoff_step',
+        help='step size used in computing scores tables and plots')
+    parser.add_argument(
+        '--unannotated-is-true-negative', default=False, action='store_true', dest='unan_is_true',
+        help='compute scores using assumption that all unjudged documents are true negatives, i.e. that the system used to feed tasks to assessors in June 2012 had perfect recall.  Default is to not assume this and only consider (stream_id, target_id) pairs that were judged.')
+    parser.add_argument(
+        '--use-micro-averaging', default=False, action='store_true', dest='use_micro_averaging',
+        help='compute scores for each mention and then average regardless of entity.  Default is macro averaging')
+    parser.add_argument(
+        '--include-useful', default=False, action='store_true', dest='include_useful',
+        help='in addition to documents rated vital, also include those rated useful')
+    parser.add_argument(
+        '--include-neutral', default=False, action='store_true', dest='include_neutral',
+        help='in addition to documents rated vital, and useful also include those rated neutral')
+    parser.add_argument(
+        '--include-training', default=False, action='store_true', dest='include_training',
+        help='includes documents from before the ETR period')
+    parser.add_argument(
+        '--reject-twitter', default=False, action='store_true', 
+        help='exclude twitter entities from the truth data')
+    parser.add_argument(
+        '--reject-wikipedia', default=False, action='store_true', 
+        help='exclude twitter entities from the truth data')
+    parser.add_argument(
+        '--debug', default=False, action='store_true', dest='debug',
+        help='print out debugging diagnostics')
+    parser.add_argument(
+        '--group', default=None,
+        help='limit entities to this group')
+    parser.add_argument(
+        '--entity-type', default=None,
+        help='limit entities to this entity-type')
+    parser.add_argument(
+        '--topics-path', default=None,
+        help='path to file containing JSON structure of query topics')
+    args = parser.parse_args()
+
+    accepted_target_ids = set()
+    if args.group or args.entity_type:
+        if not args.topics_path:
+            sys.exit('must specify --topics-path to use --group')
+        targets = json.load(open(args.topics_path))['targets']
+        for targ in targets:
+            if targ['group'] == args.group or targ['entity_type'] == args.entity_type:
+                accepted_target_ids.add(targ['target_id'])
+    
+    description = make_description(args)
+
+    ## construct reject callable
+    def reject(target_id):
+        if args.reject_twitter and 'twitter.com' in target_id:
+            return True
+        if args.reject_wikipedia and 'wikipedia.org' in target_id:
+            return True
+        if args.group or args.entity_type:
+            if target_id not in accepted_target_ids:
+                return True  ## i.e. reject it
+        return False
+
+    score_all_runs(args, description, reject)

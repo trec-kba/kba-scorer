@@ -50,7 +50,7 @@ DATE_HOURS = 'DATE_HOURS'
 
 MODES = [DOCS, OVERLAPS, FILLS, DATE_HOURS]
 
-def load_annotation(path_to_annotation_file, reject):
+def load_annotation(path_to_annotation_file, reject, slot_type_filter=None):
     '''
     Loads the SSF truth data from its JSON format on disk
     
@@ -75,6 +75,12 @@ def load_annotation(path_to_annotation_file, reject):
 
     for target_id, slots in native_annotation.items():
         for slot_type, fills in slots.items():
+            if slot_type_filter and slot_type != slot_type_filter:
+                log('excluding truth data for %s' % slot_type)
+                continue
+            elif slot_type in ['SignificantOther', 'Children']:
+                log('excluding truth data for %s because not part of official slot inventory.  To score this, use --slot-type' % slot_type)
+                continue
             for equiv_id, equiv_class in fills.items():
                 for stream_id in equiv_class['stream_ids'].keys():
                     ## one document can give multiple fills for the
@@ -369,7 +375,7 @@ def score_confusion_matrix_DATE_HOURS(CM, FILLS_TPs, annotation, positives,
          date_hour, slot_type, equiv_id, start_byte, end_byte) = rec
 
         if equiv_id in seen:
-            increment_CM(False, conf, cutoffs, CM, DATE_HOUR, target_id, unannotated_is_TN)
+            increment_CM(False, conf, cutoffs, CM, DATE_HOURS, target_id, unannotated_is_TN)
             continue
 
         ## this way of filtering is inadequate -- should be giving
@@ -388,6 +394,38 @@ def score_confusion_matrix_DATE_HOURS(CM, FILLS_TPs, annotation, positives,
     return CM, DATE_HOURS_TPs
 
 
+def make_description(args, mode):
+    ## Output the key performance statistics
+    if args.reject_wikipedia and not args.reject_twitter:
+        entities = '-twitter-only'
+    elif args.reject_twitter and not args.reject_wikipedia:
+        entities = '-wikipedia-only'
+    else:
+        assert not (args.reject_wikipedia and args.reject_twitter), \
+            'cannot score with no entities'
+        entities = '-all-entities'
+
+    if args.use_micro_averaging:
+        avg = '-microavg'
+    else:
+        avg = '-macroavg'
+
+    if args.slot_type:
+        slot_type = '-' + args.slot_type
+
+    else:
+        slot_type = '-all'
+
+    description = 'ssf' \
+            + '-' + mode \
+            + entities \
+            + slot_type \
+            + avg \
+            + '-cutoff-step-size-' \
+            + str(args.cutoff_step)
+
+    return description
+
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__, usage=__usage__)
     parser.add_argument(
@@ -401,8 +439,11 @@ if __name__ == '__main__':
         '--unannotated-is-true-negative', default=False, action='store_true', dest='unan_is_true',
         help='compute scores using assumption that all unjudged documents are true negatives, i.e. that the system used to feed tasks to assessors in June 2012 had perfect recall.  Default is to not assume this and only consider (stream_id, target_id) pairs that were judged.')
     parser.add_argument(
-        '--use-micro-averaging', default=False, action='store_true', dest='micro_is_true',
+        '--use-micro-averaging', default=False, action='store_true', dest='use_micro_averaging',
         help='compute scores for each mention and then average regardless of entity.  Default is macro averaging')
+    parser.add_argument(
+        '--slot-type', default=None,
+        help='limit scoring to truth data of only one slot type')
     parser.add_argument(
         '--reject-twitter', default=False, action='store_true', 
         help='exclude twitter entities from the truth data')
@@ -423,7 +464,7 @@ if __name__ == '__main__':
         return False
 
     ## Load in the annotation data
-    annotation, positives = load_annotation(args.annotation, reject)
+    annotation, positives = load_annotation(args.annotation, reject, slot_type_filter=args.slot_type)
     print 'This assumes that all run file names end in .gz'
 
     ## mode --> team_id --> system_id --> score type
@@ -487,9 +528,9 @@ if __name__ == '__main__':
             CM, OVERLAP_TPs, annotation, positives,
             cutoff_step_size=50, debug=args.debug)
 
-        #CM, DATE_HOURS_TPs, = score_confusion_matrix_DATE_HOURS(
-        #    CM, FILLS_TPs, annotation, positives,
-        #    cutoff_step_size=50, debug=args.debug)
+        CM, DATE_HOURS_TPs, = score_confusion_matrix_DATE_HOURS(
+            CM, FILLS_TPs, annotation, positives,
+            cutoff_step_size=50, debug=args.debug)
 
         ## split into team name and create stats file
         team_id, system_id = run_file_name[:-3].split('-')
@@ -497,6 +538,9 @@ if __name__ == '__main__':
         log(json.dumps(CM, indent=4, sort_keys=True))
 
         for mode in MODES:
+            
+            description = make_description(args, mode)
+
             ## Generate performance metrics for a run
             Scores = performance_metrics(CM[mode])
 
@@ -514,7 +558,8 @@ if __name__ == '__main__':
             ## Output the key performance statistics
             base_output_filepath = os.path.join(
                 args.run_dir, 
-                mode + '-' + run_file_name + '-cutoff-step-size-' + str(args.cutoff_step_size))
+                run_file_name + '-' + description)
+
             output_filepath = base_output_filepath + '.csv'
 
             write_performance_metrics(output_filepath, CM[mode], Scores)
@@ -529,5 +574,7 @@ if __name__ == '__main__':
                 print ' wrote plot image to %s' % graph_filepath
     
     for mode in MODES:
+        description = make_description(args, mode)
+
         ## When folder is finished running output a high level summary of the scores to overview.csv
-        write_team_summary('ssf-%s' % mode, team_scores[mode])
+        write_team_summary(description, team_scores[mode])
