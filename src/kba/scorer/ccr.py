@@ -21,18 +21,15 @@ import sys
 import csv
 import gzip
 import json
+import time
 import argparse
-try:
-    import matplotlib.pyplot as plt
-except ImportError:
-    plt = None
-
+from datetime import datetime
 from collections import defaultdict
 
-from kba.scorer._metrics import getMedian, performance_metrics, full_run_metrics, find_max_scores
+from kba.scorer._metrics import compile_and_average_performance_metrics, find_max_scores
 from kba.scorer._outputs import write_team_summary, write_graph, write_performance_metrics, log
 
-def score_confusion_matrix(path_to_run_file, annotation, cutoff_step, unannotated_is_TN, include_training, debug):
+def build_confusion_matrix(path_to_run_file, annotation, cutoff_step, unannotated_is_TN, include_training, debug):
     '''
     This function generates the confusion matrix (number of true/false positives
     and true/false negatives.  
@@ -59,7 +56,13 @@ def score_confusion_matrix(path_to_run_file, annotation, cutoff_step, unannotate
     ## count the total number of assertions per entity
     num_assertions = {}
 
-    ## Iterate through every row of the run
+    positives = defaultdict(int)
+    for stream_id, target_id in annotation:
+        positives[target_id] += 1
+
+    ## Iterate through every row of the run and construct a
+    ## de-duplicated run summary
+    run_set = dict()
     for onerow in run_file:
         ## Skip Comments         
         if onerow.startswith('#') or len(onerow.strip()) == 0:
@@ -69,7 +72,47 @@ def score_confusion_matrix(path_to_run_file, annotation, cutoff_step, unannotate
         stream_id = row[2]
         timestamp = int(stream_id.split('-')[0])
         target_id = row[3]
-        score = int(float(row[4]))
+        conf = int(float(row[4]))
+        assert 0 < conf <= 1000
+        row[4] = conf
+
+        rating = int(row[5])
+        assert -1 <= rating <= 2
+        row[5] = rating
+
+        assertion_key = (stream_id, target_id)
+        if assertion_key in run_set:
+            other_row = run_set[assertion_key]
+            if other_row[4] > conf:
+                log('ignoring a duplicate row with lower conf: %d > %d'
+                    % (other_row[4], conf))
+                continue
+
+            if positives.get(target_id, 0) == 0:
+                #log('ignoring assertion on entity for which no CCR positives are known: %s' % target_id)
+                continue
+
+            if other_row[4] == conf:
+                ## compare rating level
+                if other_row[5] != rating:
+                    log('same conf, different rating:\n%r\n%r\ntaking higher rating' % (row, other_row))
+                    ## accept higher rating
+                    if other_row[5] > rating:
+                        continue
+
+        #log('got a row: %r' % (row,))
+        run_set[assertion_key] = row
+
+    log('considering %d assertions' % len(run_set))
+    run_set = run_set.values()
+    while run_set:
+        row = run_set.pop()
+
+        stream_id = row[2]
+        timestamp = int(stream_id.split('-')[0])
+        target_id = row[3]
+        conf = row[4]
+        rating = row[5]
 
         if target_id not in num_assertions:
             num_assertions[target_id] = {'total': 0,
@@ -84,7 +127,7 @@ def score_confusion_matrix(path_to_run_file, annotation, cutoff_step, unannotate
         else:
             num_assertions[target_id]['in_ETR'] += 1
 
-        ## If the entity has been seen yet create a confusion matrix for it
+        ## If the entity has not been seen yet create a confusion matrix for it
         if not target_id in CM:
             CM[target_id] = dict()
             for cutoff in cutoffs:
@@ -102,14 +145,14 @@ def score_confusion_matrix(path_to_run_file, annotation, cutoff_step, unannotate
         ## In the annotation set and useful
         if in_annotation_set and annotation[(stream_id, target_id)]:            
             for cutoff in cutoffs:                
-                if score > cutoff:
+                if conf > cutoff:
                     ## If above the cutoff: true-positive
                     CM[target_id][cutoff]['TP'] += 1                    
                    
         ## In the annotation set and non-useful                       
         elif in_annotation_set and not annotation[(stream_id, target_id)]:
             for cutoff in cutoffs:
-                if score > cutoff:
+                if conf > cutoff:
                     ## Above the cutoff: false-positive
                     CM[target_id][cutoff]['FP'] += 1
                 else:
@@ -118,7 +161,7 @@ def score_confusion_matrix(path_to_run_file, annotation, cutoff_step, unannotate
         ## Not in the annotation set so its a negative (if flag is true)
         elif unannotated_is_TN:
             for cutoff in cutoffs:
-                if score > cutoff:
+                if conf > cutoff:
                     ## Above the cutoff: false-positive
                     CM[target_id][cutoff]['FP'] += 1
                 else:
@@ -132,17 +175,20 @@ def score_confusion_matrix(path_to_run_file, annotation, cutoff_step, unannotate
         stream_id = key[0]
         timestamp = int(stream_id.split('-')[0])
 
-        if (not include_training) and (timestamp <= 1325375999):
+        if (not include_training) and (timestamp <= END_OF_FEB_2012):
             continue 
 
         target_id = key[1]
-        annotation_positives[target_id] += annotation[(stream_id,target_id)]
+        annotation_positives[target_id] += int(annotation[(stream_id,target_id)])
         
     for target_id in CM:
         for cutoff in CM[target_id]:
             ## Then subtract the number of TP at each cutoffs 
             ## (since FN+TP==True things in annotation set)
             CM[target_id][cutoff]['FN'] = annotation_positives[target_id] - CM[target_id][cutoff]['TP']
+            assert annotation_positives[target_id] >= CM[target_id][cutoff]['TP'], \
+                "how did we get more TPs than available annotation_positives[target_id=%s] = %d >= %d = CM[target_id][cutoff=%f]['TP']" \
+                % (target_id, annotation_positives[target_id], CM[target_id][cutoff]['TP'], cutoff)
 
     if debug:
         log( 'showing assertion counts:' )
@@ -224,11 +270,6 @@ def make_description(args):
             'cannot score with no entities'
         entities = '-all-entities'
 
-    if args.use_micro_averaging:
-        avg = '-microavg'
-    else:
-        avg = '-macroavg'
-
     rating_types = '-vital'
     if args.include_useful:
         rating_types += '+useful'
@@ -238,11 +279,43 @@ def make_description(args):
     description = 'ccr' \
             + entities \
             + rating_types \
-            + avg \
             + '-cutoff-step-size-' \
             + str(args.cutoff_step)
 
     return description
+
+def process_run(args, run_file_name, annotation, description):
+    '''
+    compute scores and generate output files for a single run
+    
+    :returns dict: max_scores for this one run
+    '''
+    ## Generate confusion matrices from a run for each target_id
+    ## and for each step of the confidence cutoff
+    stats = build_confusion_matrix(
+        os.path.join(args.run_dir, run_file_name) + '.gz',
+        annotation, args.cutoff_step, args.unan_is_true, args.include_training,
+        debug=args.debug)
+
+    compile_and_average_performance_metrics(stats)
+
+    max_scores = find_max_scores(stats)
+
+    log(json.dumps(stats, indent=4, sort_keys=True))
+
+    base_output_filepath = os.path.join(
+        args.run_dir, 
+        run_file_name + '-' + description)
+
+    output_filepath = base_output_filepath + '.csv'
+    write_performance_metrics(output_filepath, stats)
+
+    ## Output a graph of the key performance statistics
+    graph_filepath = base_output_filepath + '.png'
+    write_graph(graph_filepath, stats)
+
+    return max_scores
+
 
 def score_all_runs(args, description, reject):
     '''
@@ -257,58 +330,41 @@ def score_all_runs(args, description, reject):
                                  args.min_len_clean_visible, reject)
     log( 'This assumes that all run file names end in .gz' )
 
+    #import gc
+    #from guppy import hpy
+    #hp = hpy()
+    
+    run_count = 0
     team_scores = defaultdict(lambda: defaultdict(dict))
     for run_file in os.listdir(args.run_dir):
         if not run_file.endswith('.gz'):
             continue
         
+        if args.run_name_filter and not run_file.startswith(args.run_name_filter):
+            continue
+
         ## take the name without the .gz
         run_file_name = '.'.join(run_file.split('.')[:-1])
         log( 'processing: %s.gz' % run_file_name )
         
-        ## Generate the confusion matrix for a run
-        CM = score_confusion_matrix(
-            os.path.join(args.run_dir, run_file), 
-            annotation, args.cutoff_step, args.unan_is_true, args.include_training,
-            debug=args.debug)
-
-        ## Generate performance metrics for a run
-        Scores = performance_metrics(CM)
-        
-        ## Generate the average metrics
-        (CM['average'], Scores['average']) = full_run_metrics(CM, Scores, args.use_micro_averaging)
-
-        max_scores = find_max_scores(Scores)
+        max_scores = process_run(args, run_file_name, annotation, description)
 
         ## split into team name and create stats file
         team_id, system_id = run_file_name.split('-')
         team_scores[team_id][system_id] = max_scores
 
-        ## Print the top F-Score
-        log( '   max(avg(F_1)): %.3f' % max_scores['average']['F'] )
-        log( '   max(F_1(avg(P), avg(R))): %.3f' % max_scores['average']['F_recomputed'] )
-        log( '   max(avg(SU)):  %.3f' % max_scores['average']['SU'] )
-        
-        base_output_filepath = os.path.join(
-            args.run_dir, 
-            run_file_name + '-' + description)
+        #gc.collect()
+        #log(str(hp.heap()))
 
-        output_filepath = base_output_filepath + '.csv'
-        write_performance_metrics(output_filepath, CM, Scores)
-        log( ' wrote metrics table to %s' % output_filepath )
-        
-        if not plt:
-            log( ' not generating plot, because could not import matplotlib' )
-        else:
-            ## Output a graph of the key performance statistics
-            graph_filepath = base_output_filepath + '.png'
-            write_graph(graph_filepath, Scores['average'])
-            log( ' wrote plot image to %s' % graph_filepath )
+        run_count += 1
+        #if run_count > 2:
+        #    break
 
     ## When folder is finished running output a high level summary of the scores to overview.csv
     write_team_summary(description, team_scores)
-            
+
 if __name__ == '__main__':
+    start_time = time.time()
     parser = argparse.ArgumentParser(description=__doc__, usage=__usage__)
     parser.add_argument(
         'run_dir', 
@@ -323,9 +379,6 @@ if __name__ == '__main__':
     parser.add_argument(
         '--unannotated-is-true-negative', default=False, action='store_true', dest='unan_is_true',
         help='compute scores using assumption that all unjudged documents are true negatives, i.e. that the system used to feed tasks to assessors in June 2012 had perfect recall.  Default is to not assume this and only consider (stream_id, target_id) pairs that were judged.')
-    parser.add_argument(
-        '--use-micro-averaging', default=False, action='store_true', dest='use_micro_averaging',
-        help='compute scores for each mention and then average regardless of entity.  Default is macro averaging')
     parser.add_argument(
         '--include-useful', default=False, action='store_true', dest='include_useful',
         help='in addition to documents rated vital, also include those rated useful')
@@ -353,6 +406,9 @@ if __name__ == '__main__':
     parser.add_argument(
         '--topics-path', default=None,
         help='path to file containing JSON structure of query topics')
+    parser.add_argument(
+        '--run-name-filter', default=None,
+        help='beginning of string of filename to filter runs that get considered')
     args = parser.parse_args()
 
     accepted_target_ids = set()
@@ -378,3 +434,7 @@ if __name__ == '__main__':
         return False
 
     score_all_runs(args, description, reject)
+
+    elapsed = time.time() - start_time
+    log('finished after %d seconds at at %r'
+        % (elapsed, datetime.utcnow()))

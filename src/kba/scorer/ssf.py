@@ -19,17 +19,14 @@ import sys
 import csv
 import gzip
 import json
+import time
 import argparse
 import traceback
-try:
-    import matplotlib.pyplot as plt
-except ImportError:
-    plt = None
-
+from datetime import datetime
 from operator import itemgetter
 from collections import defaultdict
 
-from kba.scorer._metrics import getMedian, performance_metrics, full_run_metrics, find_max_scores
+from kba.scorer._metrics import compile_and_average_performance_metrics, find_max_scores
 from kba.scorer._outputs import write_team_summary, write_graph, write_performance_metrics, log
 
 ## most basic level: identify documents that substantiate a particular
@@ -37,20 +34,22 @@ from kba.scorer._outputs import write_team_summary, write_graph, write_performan
 DOCS = 'DOCS'  
 
 ## on top of DOCS, also find the substring in that fills the slot
-OVERLAPS = 'OVERLAPS' 
+OVERLAP = 'OVERLAP' 
 
-## on top of OVERLAPS: correctly coref the different slot fills by
+## on top of OVERLAP: correctly coref the different slot fills by
 ## assigning consistent equiv_ids
-FILLS = 'FILLS'  
+FILL = 'FILL'  
 
-## on top of FILLS, find earliest date_hour that contains a document
+## on top of FILL, find earliest date_hour that contains a document
 ## that substantiates the slot fill, date_hours between the earliest
 ## known and the earliest found by an algorithm are false negatives.
-DATE_HOURS = 'DATE_HOURS'  
+DATE_HOUR = 'DATE_HOUR'  
 
-MODES = [DOCS, OVERLAPS, FILLS, DATE_HOURS]
+MODES = [DOCS, OVERLAP, FILL, DATE_HOUR]
 
-def load_annotation(path_to_annotation_file, reject, slot_type_filter=None):
+def load_annotation(path_to_annotation_file, reject, slot_type_filter=None,
+                    pooled_only=False,
+                    pooled_assertion_keys=None):
     '''
     Loads the SSF truth data from its JSON format on disk
     
@@ -71,18 +70,27 @@ def load_annotation(path_to_annotation_file, reject, slot_type_filter=None):
     ## invert the annotation file to have a stream_id index pointing
     ## to target_ids point to slot_types pointing to slot fills,
     ## instead of the reverse
+    # stream_id --> target_id --> slot_types
     annotation = defaultdict(lambda: defaultdict(lambda: defaultdict(dict)))
+
+    unofficial_slots = ['SignificantOther', 'Children']
 
     for target_id, slots in native_annotation.items():
         for slot_type, fills in slots.items():
             if slot_type_filter and slot_type != slot_type_filter:
                 log('excluding truth data for %s' % slot_type)
                 continue
-            elif slot_type in ['SignificantOther', 'Children']:
+            elif (slot_type_filter not in unofficial_slots) and slot_type in unofficial_slots:
                 log('excluding truth data for %s because not part of official slot inventory.  To score this, use --slot-type' % slot_type)
                 continue
             for equiv_id, equiv_class in fills.items():
                 for stream_id in equiv_class['stream_ids'].keys():
+                    assertion_key = (stream_id, target_id, slot_type) 
+                    if pooled_only and assertion_key not in pooled_assertion_keys:
+                        log('excluding truth data for %s because not in any run submission' 
+                            % (assertion_key, ))
+                        continue
+
                     ## one document can give multiple fills for the
                     ## same slot type on the same entity
                     annotation[stream_id][target_id][slot_type][equiv_id] = equiv_class
@@ -92,18 +100,62 @@ def load_annotation(path_to_annotation_file, reject, slot_type_filter=None):
     for target_id, slots in native_annotation.items():
         for slot_type, fills in slots.items():
             for equiv_id, equiv_class in fills.items():
-                ## number of known fills per target_id
-                positives[FILLS][target_id] += 1
-
                 ## number of known substantiating documents per target_id
                 positives[DOCS][target_id] += len(list(set(equiv_class['stream_ids'].keys())))
 
-                ## number of date_hours with known substantiating docs per target_id
-                positives[DATE_HOURS][target_id] += len(list(set(map(itemgetter(0), equiv_class['stream_ids'].values()))))
                 ## we only consider one byte range per document, so these are equal:
-                positives[OVERLAPS][target_id] = positives[DOCS][target_id]
+                positives[OVERLAP][target_id] = positives[DOCS][target_id]
+
+                ## these are also equal
+                positives[FILL][target_id] = positives[DOCS][target_id]
+
+                ## number of date_hours with known substantiating docs per target_id
+                #positives[DATE_HOUR][target_id] += len(list(set(map(itemgetter(0), equiv_class['stream_ids'].values()))))
+
+                ## super strict version of date_hours is that there is
+                ## only the first date_hour and only one document for
+                ## it
+                positives[DATE_HOUR][target_id] += 1
+
 
     return annotation, positives
+
+def assertions(run_file_handle):
+    '''
+    iterate over run_file_handle yielding assertion keys and rows
+    
+    assertion key = (stream_id, target_id, slot_type)
+    '''
+    for onerow in run_file_handle:
+        ## Skip Comments         
+        if onerow.startswith('#') or len(onerow.strip()) == 0:
+            continue
+
+        row = onerow.split()
+        assert len(row) == 11, row
+        try:
+            stream_id = row[2]
+            timestamp = int(stream_id.split('-')[0])
+            target_id = row[3]
+            conf = int(float(row[4]))
+            assert 0 < conf <= 1000
+            row[4] = conf
+
+            rating = int(row[5])
+            contains_mention = int(row[6])
+            date_hour = row[7]
+            slot_type = row[8]
+            equiv_id = row[9]
+            start_byte, end_byte = row[10].split('-')
+            start_byte = int(start_byte)
+            end_byte = int(end_byte)
+
+        except Exception, exc:
+            print repr(row)
+            sys.exit(traceback.format_exc(exc))
+
+        assertion_key = (stream_id, target_id, slot_type)
+        yield assertion_key, row
 
 
 def score_confusion_matrix_DOCS(run_file_handle, annotation, positives,
@@ -139,32 +191,44 @@ def score_confusion_matrix_DOCS(run_file_handle, annotation, positives,
     ## to the four evaluation steps beyond DOCS.
     DOCS_TPs = list()
 
-    ## Iterate through every row of the run
-    for onerow in run_file_handle:
-        ## Skip Comments         
-        if onerow.startswith('#') or len(onerow.strip()) == 0:
+    ## Iterate through every row of the run and construct a
+    ## de-duplicated run summary
+    run_set = dict()
+    for assertion_key, row in assertions(run_file_handle):
+        conf = row[4]
+
+        stream_id, target_id, slot_type = assertion_key
+        if positives[DOCS].get(target_id, 0) == 0:
+            #log('ignoring assertion on entity for which no DOCS positives are known: %s' % target_id)
             continue
 
-        row = onerow.split()
-        assert len(row) == 11, row
-        try:
-            stream_id = row[2]
-            timestamp = int(stream_id.split('-')[0])
-            target_id = row[3]
-            conf = int(float(row[4]))
+        if assertion_key in run_set:
+            other_row = run_set[assertion_key]
+            if other_row[4] > conf:
+                log('ignoring a duplicate row with lower conf: %d > %d'
+                    % (other_row[4], conf))
+                continue
 
-            rating = int(row[5])
-            contains_mention = int(row[6])
-            date_hour = row[7]
-            slot_type = row[8]
-            equiv_id = row[9]
-            start_byte, end_byte = row[10].split('-')
-            start_byte = int(start_byte)
-            end_byte = int(end_byte)
+        #log('got a row: %r' % (row,))
+        run_set[assertion_key] = row
 
-        except Exception, exc:
-            print repr(row)
-            sys.exit(traceback.format_exc(exc))
+    log('considering %d unique DOCS assertions' % len(run_set))
+    for row in run_set.values():
+
+        stream_id = row[2]
+        timestamp = int(stream_id.split('-')[0])
+        target_id = row[3]
+        conf = row[4]
+        rating = row[5]
+
+        contains_mention = int(row[6])
+        date_hour = row[7]
+        slot_type = row[8]
+        equiv_id = row[9]
+        start_byte, end_byte = row[10].split('-')
+        start_byte = int(start_byte)
+        end_byte = int(end_byte)
+
 
         if target_id not in num_assertions:
             num_assertions[target_id] = {'total': 0,
@@ -182,12 +246,14 @@ def score_confusion_matrix_DOCS(run_file_handle, annotation, positives,
                     is_annotated_TP = True
                     rec = (stream_id, target_id, conf, rating, contains_mention, date_hour, slot_type, equiv_id, start_byte, end_byte)
                     DOCS_TPs.append( rec )
-                    log('TP: %r' % (rec,))
+                    #log('TP: %r' % (rec,))
 
         if is_annotated_TP:
             num_assertions[target_id]['is_annotated_TP'] += 1
 
-        increment_CM(is_annotated_TP, conf, cutoffs, CM, DOCS, target_id, unannotated_is_TN)
+        increment_CM(is_annotated_TP, conf=conf, cutoffs=cutoffs, CM=CM, 
+                     mode=DOCS, 
+                     target_id=target_id, unannotated_is_TN=unannotated_is_TN)
 
     correct_FN(CM, DOCS, positives)
 
@@ -200,36 +266,37 @@ def score_confusion_matrix_DOCS(run_file_handle, annotation, positives,
 
     return CM, DOCS_TPs
 
-def increment_CM(is_annotated_TP, conf, cutoffs, CM, mode, target_id, unannotated_is_TN=False):
+def increment_CM(is_annotated_TP, conf=0, cutoffs=None, CM=None, mode=None, target_id=None, unannotated_is_TN=False):
     '''
     for a given TP with some conf score, update the CM for the given mode
     '''
+    assert target_id and isinstance(target_id, str) and target_id.startswith('http'), target_id
+
     ## count T/F N/P for each mode
     if is_annotated_TP:
         for cutoff in cutoffs:                
             if conf > cutoff:
-                ## If above the cutoff: DOCS-mode true-positive
-                CM[DOCS][target_id][cutoff]['TP'] += 1
+                CM[mode][target_id][cutoff]['TP'] += 1
 
     ## In the annotation set and non-useful                       
     elif not is_annotated_TP:
         for cutoff in cutoffs:
             if conf > cutoff:
                 ## Above the cutoff: false-positive
-                CM[DOCS][target_id][cutoff]['FP'] += 1
+                CM[mode][target_id][cutoff]['FP'] += 1
             else:
                 ## Below the cutoff: true-negative
-                CM[DOCS][target_id][cutoff]['TN'] += 1
+                CM[mode][target_id][cutoff]['TN'] += 1
 
     ## Not in the annotation set so its a negative (if flag is true)
     elif unannotated_is_TN:
         for cutoff in cutoffs:
             if conf > cutoff:
                 ## Above the cutoff: false-positive
-                CM[DOCS][target_id][cutoff]['FP'] += 1
+                CM[mode][target_id][cutoff]['FP'] += 1
             else:
                 ## Below the cutoff: true-negative
-                CM[DOCS][target_id][cutoff]['TN'] += 1    
+                CM[mode][target_id][cutoff]['TN'] += 1    
     
     return CM
 
@@ -243,6 +310,9 @@ def correct_FN(CM, mode, positives):
             ## (since FN+TP==True things in annotation set)
             CM[mode][target_id][cutoff]['FN'] = \
                 positives[mode][target_id] - CM[mode][target_id][cutoff]['TP']
+            assert positives[mode][target_id] >= CM[mode][target_id][cutoff]['TP'], \
+                "how did we get more TPs than available positives[mode=%s][target_id=%s] = %d >= %d = CM[mode][target_id][cutoff=%f]['TP']" \
+                % (mode, target_id, positives[mode][target_id], CM[mode][target_id][cutoff]['TP'], cutoff)
 
     return CM
 
@@ -256,11 +326,16 @@ def score_confusion_matrix_OVERLAP(CM, DOCS_TPs, annotation, positives,
     '''
     cutoffs = range(0, 999, cutoff_step_size)
 
-    OVERLAP_TPs = list()
+    OVERLAP_TPs = dict()
 
+    log('considering %d unique OVERLAP assertions' % len(DOCS_TPs))
     for rec in DOCS_TPs:
         (stream_id, target_id, conf, rating, contains_mention, 
          date_hour, slot_type, runs_equiv_id, start_byte, end_byte) = rec
+
+        if positives[OVERLAP].get(target_id, 0) == 0:
+            log('ignoring assertion on entity for which no OVERLAP positives are known: %s' % target_id)
+            continue
 
         start_byte = int(start_byte)
         end_byte = int(end_byte)
@@ -271,33 +346,56 @@ def score_confusion_matrix_OVERLAP(CM, DOCS_TPs, annotation, positives,
             for offset in offsets:
                 assert isinstance(offset[0], int)
                 assert isinstance(offset[1], int)
-                if start_byte <= offset[1] and end_byte >= offset[0]:
+
+                ## we could/should be much stricter here, 10x is a big window
+                true_len = offset[1] - offset[0]
+                runs_len = end_byte - start_byte
+                if start_byte <= offset[1] and end_byte >= offset[0] and runs_len < 10 * true_len:
                     overlaps = True
                     break
-            log('(%d, %d) compared to offsets %r\n' % (start_byte, end_byte, offsets))
+
+            #log('(%d, %d) compared to offsets %r\n' % (start_byte, end_byte, offsets))
 
             if not overlaps:
-                increment_CM(False, conf, cutoffs, CM, OVERLAPS, unannotated_is_TN)
-                
+                increment_CM(False, conf=conf, cutoffs=cutoffs, CM=CM, 
+                             mode=OVERLAP, 
+                             target_id=target_id, unannotated_is_TN=unannotated_is_TN)
+
             #log('found one!!  system equiv_id (%r) --> assessors equiv_id (%r)'
             #    % (runs_equiv_id, true_equiv_id))
             rec = list(rec)
             rec[7] = (runs_equiv_id, true_equiv_id)
             rec = tuple(rec)
-            OVERLAP_TPs.append(rec)
 
-            increment_CM(True, conf, cutoffs, CM, OVERLAPS, unannotated_is_TN)
+            assertion_key = (stream_id, target_id, slot_type, start_byte, end_byte)
+            if assertion_key in OVERLAP_TPs:
+                other_row = OVERLAP_TPs[assertion_key]
+                if other_row[4] > conf:
+                    log('ignoring a duplicate row with lower conf: %d > %d'
+                        % (other_row[4], conf))
+                    continue
 
-    correct_FN(CM, OVERLAPS, positives)
+            OVERLAP_TPs[assertion_key] = rec
+
+            increment_CM(True, conf=conf, cutoffs=cutoffs, CM=CM, 
+                         mode=OVERLAP, 
+                         target_id=target_id, unannotated_is_TN=unannotated_is_TN)
+
+    correct_FN(CM, OVERLAP, positives)
+
+    if OVERLAP_TPs:
+        assert CM[OVERLAP]
+
+    OVERLAP_TPs = OVERLAP_TPs.values()
 
     return CM, OVERLAP_TPs
 
 
-def score_confusion_matrix_FILLS(CM, OVERLAPS_TPs, annotation, positives,
+def score_confusion_matrix_FILL(CM, OVERLAP_TPs, annotation, positives,
                            unannotated_is_TN=False,
                            cutoff_step_size=50, debug=False):
     '''
-    construct FILLS_TPs by excluding from OVERLAPS_TPs those assertions
+    construct FILL_TPs by excluding from OVERLAP_TPs those assertions
     that either:
 
        1) re-use an earlier (run)equiv_id that was not associated with
@@ -309,17 +407,22 @@ def score_confusion_matrix_FILLS(CM, OVERLAPS_TPs, annotation, positives,
     '''
     cutoffs = range(0, 999, cutoff_step_size)
 
-    FILLS_TPs = list()
+    FILL_TPs = dict()
 
     runs_to_true = dict()
     true_to_runs = dict()
 
-    for rec in OVERLAPS_TPs:
+    log('considering %d unique FILL assertions' % len(OVERLAP_TPs))
+    for rec in OVERLAP_TPs:
         (stream_id, target_id, conf, rating, contains_mention, date_hour, 
          slot_type, (runs_equiv_id, true_equiv_id), start_byte, end_byte) = rec
 
+        if positives[FILL].get(target_id, 0) == 0:
+            log('ignoring assertion on entity for which no FILL positives are known: %s' % target_id)
+            continue
+
         ## this is a tri-state variable
-        FILLS_correct = None
+        FILL_correct = None
 
         if runs_equiv_id not in runs_to_true and true_equiv_id not in true_to_runs:
             runs_to_true[runs_equiv_id] = true_equiv_id
@@ -331,67 +434,87 @@ def score_confusion_matrix_FILLS(CM, OVERLAPS_TPs, annotation, positives,
             if runs_equiv_id in runs_to_true:
                 ## run has previously asserted this equiv_id
                 if true_equiv_id == runs_to_true[runs_equiv_id]:
-                    FILLS_correct = True
+                    FILL_correct = True
                 else:
-                    FILLS_correct = False
+                    FILL_correct = False
 
             ## check failure mode #2 in __doc__ string
             if true_equiv_id in true_to_runs:
                 if runs_equiv_id == true_to_runs[true_equiv_id]:
-                    if FILLS_correct is not False:
-                        FILLS_correct = True
+                    if FILL_correct is not False:
+                        FILL_correct = True
                 else:
-                    FILLS_correct = False
+                    FILL_correct = False
 
-        if FILLS_correct in [True, None]:
-            FILLS_TPs.append( rec )
+        if FILL_correct in [True, None]:
 
-        if FILLS_correct is True:
-            increment_CM(True, conf, cutoffs, CM, FILLS, target_id, unannotated_is_TN)
-        elif FILLS_correct is False:
-            increment_CM(False, conf, cutoffs, CM, FILLS, target_id, unannotated_is_TN)
+            assertion_key = (stream_id, target_id, slot_type, true_equiv_id)
+            if assertion_key in FILL_TPs:
+                other_row = FILL_TPs[assertion_key]
+                if other_row[4] > conf:
+                    log('ignoring a duplicate row with lower conf: %d > %d'
+                        % (other_row[4], conf))
+                    continue
 
-    correct_FN(CM, FILLS, positives)
+            FILL_TPs[assertion_key] = rec
 
-    return CM, FILLS_TPs
+        increment_CM(FILL_correct, conf=conf, cutoffs=cutoffs, CM=CM, mode=FILL, 
+                     target_id=target_id, 
+                     unannotated_is_TN=unannotated_is_TN)
+
+    correct_FN(CM, FILL, positives)
+
+    FILL_TPs = FILL_TPs.values()
+
+    return CM, FILL_TPs
 
 
-def score_confusion_matrix_DATE_HOURS(CM, FILLS_TPs, annotation, positives,
+def score_confusion_matrix_DATE_HOUR(CM, FILL_TPs, annotation, positives,
                                 cutoff_step_size=50, unannotated_is_TN=False,
                                 debug=False):
     '''
-    construct DATE_HOURS_TPs by excluding from FILLS_TPs those
+    construct DATE_HOUR_TPs by excluding from FILL_TPs those
     assertions that happen after the first one
     '''
     cutoffs = range(0, 999, cutoff_step_size)
 
-    ## FILLS_TPs are already in date_hour order, so we only have to
+    ## FILL_TPs are already in date_hour order, so we only have to
     ## count the first one for each equiv_id
     seen = set()
-    DATE_HOURS_TPs = list()
+    DATE_HOUR_TPs = list()
 
-    for rec in FILLS_TPs:
+    log('considering %d unique DATE_HOUR assertions' % len(FILL_TPs))
+    for rec in FILL_TPs:
         (stream_id, target_id, conf, rating, contains_mention, 
          date_hour, slot_type, equiv_id, start_byte, end_byte) = rec
 
+        if positives[DATE_HOUR].get(target_id, 0) == 0:
+            log('ignoring assertion on entity for which no DATE_HOUR positives are known: %s' % target_id)
+            continue
+
         if equiv_id in seen:
-            increment_CM(False, conf, cutoffs, CM, DATE_HOURS, target_id, unannotated_is_TN)
+            increment_CM(False, conf=conf, cutoffs=cutoffs, CM=CM, mode=DATE_HOUR, 
+                         target_id=target_id, 
+                         unannotated_is_TN=unannotated_is_TN)
             continue
 
         ## this way of filtering is inadequate -- should be giving
         ## partial credit for finding slot fill late
         seen.add(equiv_id)
-        DATE_HOURS_TPs.append(rec)
+        DATE_HOUR_TPs.append(rec)
 
-        increment_CM(True, conf, cutoffs, CM, FILLS, unannotated_is_TN)
+        increment_CM(True, conf=conf, cutoffs=cutoffs, CM=CM, mode=DATE_HOUR, 
+                     target_id=target_id, 
+                     unannotated_is_TN=unannotated_is_TN)
 
-        for cutoff in CM[DATE_HOURS][target_id]:
+        for cutoff in CM[DATE_HOUR][target_id]:
             ## Then subtract the number of TP at each cutoffs 
             ## (since FN+TP==True things in annotation set)
-            CM[DATE_HOURS][target_id][cutoff]['FN'] = \
-                positives[DATE_HOURS][target_id] - CM[DATE_HOURS][target_id][cutoff]['TP']
+            CM[DATE_HOUR][target_id][cutoff]['FN'] = \
+                positives[DATE_HOUR][target_id] - CM[DATE_HOUR][target_id][cutoff]['TP']
 
-    return CM, DATE_HOURS_TPs
+    log('considering %d DATE_HOUR_TPs' % len(DATE_HOUR_TPs))
+    return CM, DATE_HOUR_TPs
 
 
 def make_description(args, mode):
@@ -405,74 +528,41 @@ def make_description(args, mode):
             'cannot score with no entities'
         entities = '-all-entities'
 
-    if args.use_micro_averaging:
-        avg = '-microavg'
-    else:
-        avg = '-macroavg'
-
     if args.slot_type:
         slot_type = '-' + args.slot_type
 
     else:
-        slot_type = '-all'
+        slot_type = '-all-slots'
+
+    if args.pooled_only:
+        pooled_only = '-pooled-only'
+    else:
+        pooled_only = ''
 
     description = 'ssf' \
             + '-' + mode \
+            + pooled_only \
             + entities \
             + slot_type \
-            + avg \
             + '-cutoff-step-size-' \
-            + str(args.cutoff_step)
+            + str(args.cutoff_step_size)
 
     return description
 
-if __name__ == '__main__':
-    parser = argparse.ArgumentParser(description=__doc__, usage=__usage__)
-    parser.add_argument(
-        'run_dir', 
-        help='path to the directory containing run files')
-    parser.add_argument('annotation', help='path to the annotation file')
-    parser.add_argument(
-        '--cutoff-step-size', type=int, default=50, dest = 'cutoff_step_size',
-        help='step size used in computing scores tables and plots')
-    parser.add_argument(
-        '--unannotated-is-true-negative', default=False, action='store_true', dest='unan_is_true',
-        help='compute scores using assumption that all unjudged documents are true negatives, i.e. that the system used to feed tasks to assessors in June 2012 had perfect recall.  Default is to not assume this and only consider (stream_id, target_id) pairs that were judged.')
-    parser.add_argument(
-        '--use-micro-averaging', default=False, action='store_true', dest='use_micro_averaging',
-        help='compute scores for each mention and then average regardless of entity.  Default is macro averaging')
-    parser.add_argument(
-        '--slot-type', default=None,
-        help='limit scoring to truth data of only one slot type')
-    parser.add_argument(
-        '--reject-twitter', default=False, action='store_true', 
-        help='exclude twitter entities from the truth data')
-    parser.add_argument(
-        '--reject-wikipedia', default=False, action='store_true', 
-        help='exclude twitter entities from the truth data')
-    parser.add_argument(
-        '--debug', default=False, action='store_true', dest='debug',
-        help='print out debugging diagnostics')
-    args = parser.parse_args()
+def ssf_runs(args):
+    '''
+    yield file handles for all of the SSF runs
+    '''
 
-    ## construct reject callable
-    def reject(target_id):
-        if args.reject_twitter and 'twitter.com' in target_id:
-            return True
-        if args.reject_wikipedia and 'wikipedia.org' in target_id:
-            return True
-        return False
-
-    ## Load in the annotation data
-    annotation, positives = load_annotation(args.annotation, reject, slot_type_filter=args.slot_type)
-    print 'This assumes that all run file names end in .gz'
-
-    ## mode --> team_id --> system_id --> score type
-    team_scores = defaultdict(lambda: defaultdict(lambda: defaultdict(lambda: defaultdict(dict))))
-
+    log( 'This assumes that all run file names end in .gz' )
+    run_count = 0
     for run_file_name in os.listdir(args.run_dir):
         if not run_file_name.endswith('.gz'):
-            print 'ignoring: %s' % run_file_name
+            log( 'ignoring: %s' % run_file_name )
+            continue
+
+        if args.run_name_filter and not run_file_name.startswith(args.run_name_filter):
+            log( 'ignoring: %s' % run_file_name)
             continue
 
         ## Open the run file    
@@ -499,7 +589,7 @@ if __name__ == '__main__':
                 second_line = None
 
         if 'NULL' in second_line or filter_run['task_id'] != 'kba-ssf-2013':
-            print 'ignoring non-SSF run: %s' % run_file_name
+            log( 'ignoring non-SSF run: %s' % run_file_name )
             continue
 
         ## Open run file again now that we verified it is SSF
@@ -509,8 +599,80 @@ if __name__ == '__main__':
         else:
             run_file_handle =      open(run_file_path, 'r')
 
-        print 'processing: %s' % run_file_name
-        print json.dumps(filter_run, indent=4, sort_keys=True)
+        log( 'processing: %s' % run_file_name )
+        log( json.dumps(filter_run, indent=4, sort_keys=True) )
+
+        yield run_file_name, run_file_handle
+
+        #run_count += 1
+        #if run_count > 2:
+        #    break
+
+if __name__ == '__main__':
+    start_time = time.time()
+    parser = argparse.ArgumentParser(description=__doc__, usage=__usage__)
+    parser.add_argument(
+        'run_dir', 
+        help='path to the directory containing run files')
+    parser.add_argument('annotation', help='path to the annotation file')
+    parser.add_argument(
+        '--cutoff-step-size', type=int, default=50, dest = 'cutoff_step_size',
+        help='step size used in computing scores tables and plots')
+    parser.add_argument(
+        '--unannotated-is-true-negative', default=False, action='store_true', dest='unan_is_true',
+        help='compute scores using assumption that all unjudged documents are true negatives, i.e. that the system used to feed tasks to assessors in June 2012 had perfect recall.  Default is to not assume this and only consider (stream_id, target_id) pairs that were judged.')
+    parser.add_argument(
+        '--slot-type', default=None,
+        help='limit scoring to truth data of only one slot type')
+    parser.add_argument(
+        '--pooled-only', default=False, action='store_true',
+        help='limit scoring to truth data that at least one run found')
+    parser.add_argument(
+        '--reject-twitter', default=False, action='store_true', 
+        help='exclude twitter entities from the truth data')
+    parser.add_argument(
+        '--reject-wikipedia', default=False, action='store_true', 
+        help='exclude twitter entities from the truth data')
+    parser.add_argument(
+        '--debug', default=False, action='store_true', dest='debug',
+        help='print out debugging diagnostics')
+    parser.add_argument(
+        '--run-name-filter', default=None,
+        help='beginning of string of filename to filter runs that get considered')
+    args = parser.parse_args()
+
+    ## construct reject callable
+    def reject(target_id):
+        if args.reject_twitter and 'twitter.com' in target_id:
+            return True
+        if args.reject_wikipedia and 'wikipedia.org' in target_id:
+            return True
+        return False
+
+    ## stream_id --> target_id --> slot_type observed in at least one run
+    pooled_assertion_keys = set()
+    if args.pooled_only:
+        for run_file_name, run_file_handle in ssf_runs(args):
+            for assertion_key, row in assertions(run_file_handle):
+                pooled_assertion_keys.add(assertion_key)
+
+    ## Load in the annotation data
+    annotation, positives = load_annotation(
+        args.annotation, reject, 
+        slot_type_filter=args.slot_type,
+        pooled_only = args.pooled_only,
+        pooled_assertion_keys = pooled_assertion_keys,
+        )
+
+    log('considering the following positives:\n%s' % json.dumps(positives, indent=4, sort_keys=True))
+    for mode in MODES:
+        log('considering the %d positives for %s' % (sum(positives[mode].values()), mode))
+    
+
+    ## mode --> team_id --> system_id --> score type
+    team_scores = defaultdict(lambda: defaultdict(lambda: defaultdict(lambda: defaultdict(dict))))
+
+    for run_file_name, run_file_handle in ssf_runs(args):
 
         ## Generate the confusion matrices for a run
         CM, DOCS_TPs = score_confusion_matrix_DOCS(
@@ -524,36 +686,31 @@ if __name__ == '__main__':
             CM, DOCS_TPs, annotation, positives,
             cutoff_step_size=50, debug=args.debug)
 
-        CM, FILLS_TPs, = score_confusion_matrix_FILLS(
+        CM, FILL_TPs, = score_confusion_matrix_FILL(
             CM, OVERLAP_TPs, annotation, positives,
             cutoff_step_size=50, debug=args.debug)
 
-        CM, DATE_HOURS_TPs, = score_confusion_matrix_DATE_HOURS(
-            CM, FILLS_TPs, annotation, positives,
+        CM, DATE_HOUR_TPs, = score_confusion_matrix_DATE_HOUR(
+            CM, FILL_TPs, annotation, positives,
             cutoff_step_size=50, debug=args.debug)
 
         ## split into team name and create stats file
         team_id, system_id = run_file_name[:-3].split('-')
 
-        log(json.dumps(CM, indent=4, sort_keys=True))
+        ## now we switch from calling it a confusion matrix to calling
+        ## it the general statistics matrix:
+        stats = CM
 
         for mode in MODES:
             
             description = make_description(args, mode)
 
             ## Generate performance metrics for a run
-            Scores = performance_metrics(CM[mode])
+            compile_and_average_performance_metrics(stats[mode])
 
-            (CM[mode]['average'], Scores['average']) = \
-                full_run_metrics(CM[mode], Scores, args.micro_is_true)
+            max_scores = find_max_scores(stats[mode])
 
-            max_scores = find_max_scores(Scores)
             team_scores[mode][team_id][system_id] = max_scores
-
-            ## Print the top F-Score
-            log( '   %s: max(avg(F_1)): %.3f' % (mode, max_scores['average']['F'] ))
-            log( '   %s: max(F_1(avg(P), avg(R))): %.3f' % (mode, max_scores['average']['F_recomputed'] ))
-            log( '   %s: max(avg(SU)):  %.3f' % (mode, max_scores['average']['SU'] ))
 
             ## Output the key performance statistics
             base_output_filepath = os.path.join(
@@ -562,19 +719,20 @@ if __name__ == '__main__':
 
             output_filepath = base_output_filepath + '.csv'
 
-            write_performance_metrics(output_filepath, CM[mode], Scores)
-            print ' wrote metrics table to %s' % output_filepath
+            write_performance_metrics(output_filepath, stats[mode])
 
-            if not plt:
-                print ' not generating plot, because could not import matplotlib'
-            else:
-                ## Output a graph of the key performance statistics
-                graph_filepath = base_output_filepath + '.png'
-                write_graph(graph_filepath, Scores['average'])
-                print ' wrote plot image to %s' % graph_filepath
-    
+            ## Output a graph of the key performance statistics
+            graph_filepath = base_output_filepath + '.png'
+            write_graph(graph_filepath, stats[mode])
+
+        log(json.dumps(stats, indent=4, sort_keys=True))
+
     for mode in MODES:
         description = make_description(args, mode)
 
         ## When folder is finished running output a high level summary of the scores to overview.csv
         write_team_summary(description, team_scores[mode])
+
+    elapsed = time.time() - start_time
+    log('finished after %d seconds at at %r'
+        % (elapsed, datetime.utcnow()))

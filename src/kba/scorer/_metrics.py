@@ -29,7 +29,11 @@ def precision(TP, FP):
     false-positives (FP)
     '''      
     if (TP+FP) > 0:
-        return float(TP) / (TP + FP)
+        precision = float(TP) / (TP + FP)
+        if not (0.0 <= precision <= 1.0):
+            sys.exit('invalid precision = %f = float(TP=%d) / (TP=%d + FP=%d)' 
+                     % (precision, TP, TP, FP))
+        return precision
     else:
         return 0.0
 
@@ -39,11 +43,15 @@ def recall(TP, FN):
     false-negatives (FN)
     '''    
     if (TP+FN) > 0:
-        return float(TP) / (TP + FN)
+        recall = float(TP) / (TP + FN)
+        if not (0.0 <= recall <= 1.0):
+            sys.exit('invalid recall = %f = float(TP=%d) / (TP=%d + FN=%d)' 
+                     % (recall, TP, TP, FN))
+        return recall
     else:
         return 0.0
 
-def fscore(precision, recall):
+def fscore(precision=None, recall=None):
     '''
     Calculates the F-score given the precision and recall
     '''
@@ -66,128 +74,175 @@ def scaled_utility(TP, FP, FN, MinNU = -0.5):
     else:
         return 0.0
 
-def performance_metrics(CM, debug=False):
+def is_valid_target_id(str_that_might_be_target_id):
     '''
-    Computes the performance metrics (precision, recall, F-score, scaled utility)
-    
-    CM: dict containing the confusion matrix calculated from score_confusion_matrix()
+    check that the input string starts with http, and is therefore
+    probably a valid TREC KBA target_id and not one of the other
+    strings that can appear in stats, such as "micro_average"
     '''
-    ## Compute the performance statistics                
-    Scores = dict()
-    
-    for target_id in CM:
-        Scores[target_id] = dict()
-        for cutoff in CM[target_id]:
-            Scores[target_id][cutoff] = dict()
+    return str_that_might_be_target_id.startswith('http')
 
-            ## Precision
-            Scores[target_id][cutoff]['P'] = precision(CM[target_id][cutoff]['TP'],
-                                                       CM[target_id][cutoff]['FP'])
+def is_valid_confusion_matrix(CM):
+    return all(0 <= CM[key] for key in ['TP', 'FP', 'TN', 'FN'])
 
-            ## Recall
-            Scores[target_id][cutoff]['R'] = recall(CM[target_id][cutoff]['TP'],
-                                                    CM[target_id][cutoff]['FN'])
-
-            ## F-Score
-            Scores[target_id][cutoff]['F'] = fscore(Scores[target_id][cutoff]['P'],
-                                                    Scores[target_id][cutoff]['R'])
-
-            ## Scaled Utility from http://trec.nist.gov/pubs/trec11/papers/OVER.FILTERING.pdf
-            Scores[target_id][cutoff]['SU'] = scaled_utility(CM[target_id][cutoff]['TP'], 
-                                                  CM[target_id][cutoff]['FP'], 
-                                                  CM[target_id][cutoff]['FN'])
-    return Scores
-
-
-def full_run_metrics(CM, Scores, use_micro_averaging=False):
+def compile_and_average_performance_metrics(stats):
     '''
-    Computes the metrics for the whole run over all the entities
-    
-    CM: dict, the confusion matrix for each target_id defined below
-    Scores: dict, the scores for each target_id
+    construct P/R/F/SU for every entity and also for three methods of
+    averaging over the entities:
 
-    :param use_micro_averaging: false --> average over mentions, true --> average over entities (target_ids)
-    :type use_micro_averaging: bool
-    
-    returns (CM_total, Scores_average) the average of the scores and the summed
-    confusion matrix     
+      * micro -- weights each assertion equally
+
+      * macro -- weights each entity equally (same as the B-cubed _extraction_ measure)
+
+      * weighted -- weights each entity by the number of possible positives in the truth set
     '''
-    
-    flipped_CM = defaultdict(dict)
-    for key, val in CM.items():
-        for subkey, subval in val.items():
-            flipped_CM[subkey][key] = subval
+    compile_performance_metrics(stats)
+    micro_average(stats)
+    macro_average(stats)
+    weighted_average(stats)
 
-    CM_total = dict()
+
+def compile_performance_metrics(stats):
+    '''
+    Extend stats by adding the performance metrics at each cutoff.
+    New keys added to each stats[target_id][cutoff] matrix:
+ 
+      * P = precision
+      * R = recall
+      * F = F_beta=1
+      * SU = scaled utility
     
-    for cutoff in flipped_CM:
-        CM_total[cutoff] = dict(TP=0, FP=0, FN=0, TN=0)     
-        for target_id in flipped_CM[cutoff]:
-            for key in CM[target_id][cutoff]:
-                CM_total[cutoff][key] += CM[target_id][cutoff][key]
+    stats: dict containing the confusion matrix of counts of type-II
+    errors (True/False Positives/Negatives)
+    '''    
+    for target_id in stats:
+        for cutoff in stats[target_id]:
+            _stats = stats[target_id][cutoff]
+
+            assert is_valid_confusion_matrix(_stats), _stats
+
+            _stats['P'] = precision(_stats['TP'], _stats['FP'])
             
-    flipped_Scores = defaultdict(dict)
-    for key, val in Scores.items():
-        for subkey, subval in val.items():
-            flipped_Scores[subkey][key] = subval
-        
-    Scores_average = dict()
-    ## Do macro averaging
-    if not use_micro_averaging:
-        for cutoff in flipped_Scores:
-            Scores_average[cutoff] = dict(P=0.0, R=0.0, F=0.0, SU=0.0)
-            ## Sum over target_ids for each cutoff
-            for target_id in flipped_Scores[cutoff]:
-                for metric in flipped_Scores[cutoff][target_id]:
-                    Scores_average[cutoff][metric] += Scores[target_id][cutoff][metric]
-        ## Divide by the number of target_ids to get the average metrics
-        for cutoff in Scores_average:
-            for metric in Scores_average[cutoff]:
-                Scores_average[cutoff][metric] = Scores_average[cutoff][metric] / len(Scores)
-
-        print 'macro averaged'
-
-    ## Do micro averaging
-    else:
-        tempCM = dict(average=CM_total)
-        tempScores = performance_metrics(tempCM)
-        Scores_average = tempScores['average']
-        print 'micro averaged'
-
-    return CM_total, Scores_average
+            _stats['R'] =    recall(_stats['TP'], _stats['FN'])
+            
+            ## F-Score --> NB: this uses the two values just computed above
+            _stats['F'] =    fscore(_stats['P'],  _stats['R'])
+            
+            ## Scaled Utility from http://trec.nist.gov/pubs/trec11/papers/OVER.FILTERING.pdf
+            _stats['SU'] = scaled_utility(_stats['TP'], _stats['FP'], _stats['FN'])
 
 
-def find_max_scores(Scores):
+def micro_average(stats):
     '''
-    find the maximum of each type of metric across all cutoffs
+    create stats['micro_average'] containing the micro averaged values
+    of all the metrics
+
+    Computes "F" as F_1(micro_average(P), micro_average(R))
+    '''
+    ## We could just average P and R, but to get SU averaged
+    ## correctly, we need to go back to the confusion matrix, so
+    ## construct a dict structured like stats with all of the counts
+    ## on a single target_id=="micro_average"
+    stats_summed = dict(micro_average=defaultdict(lambda: defaultdict(int)))
+
+    for target_id in stats:
+        for cutoff in stats[target_id]:
+            for metric in ['TP', 'FP', 'TN', 'FN']:
+                stats_summed['micro_average'][cutoff][metric] += stats[target_id][cutoff][metric]
+
+
+    compile_performance_metrics(stats_summed)
+
+    stats['micro_average'] = stats_summed.pop('micro_average')
+
+
+def macro_average(stats):
+    '''
+    create stats['macro_average'] containing the macro averaged values
+    of all the metrics
+
+    Computes "F" as F_1(macro_average(P), macro_average(R))
+    '''
+    _average(stats)
+
+def weighted_average(stats):
+    '''
+    create stats['weighted_average'] containing the macro averaged values
+    of all the metrics
+
+    Computes "F" as F_1(weighted_average(P), weighted_average(R))
+    '''
+    num_possible_positives = defaultdict(int)
+    for target_id in stats:
+        num_possible_positives[target_id] += \
+            stats[target_id][0]['TP'] + stats[target_id][0]['FN']    
+    total_possible_positives = sum(num_possible_positives.values())
+
+    ## rescale back to one
+    for target_id in num_possible_positives:
+        if total_possible_positives > 0:
+            num_possible_positives[target_id] /= total_possible_positives
+        else:
+            num_possible_positives[target_id] = 0
+
+    _average(stats, weight=num_possible_positives.get, name='weighted_average')
+
+def _average(stats, metrics=['P', 'R', 'SU'], weight=lambda target_id: 1, name='macro_average'):
+    '''
+    computes stats[name] = a weighted average of the 'metrics' in
+    'stats' using the weighting function.
+
+    Default is to average P, R, SU using weight=1 for each entity
+
+    If 'P' and 'R' are in metrics, then computes 
+       stats["F"] = F_1(_average(P), _average(R))
+    '''
+    num_entities = sum(is_valid_target_id(key) for key in stats)
+    _average = defaultdict(lambda: defaultdict(float))
+    for target_id in stats:
+        if not is_valid_target_id(target_id): 
+            ## ignore non-query keys, e.g. "micro_average"
+            continue
+        for cutoff in stats[target_id]:
+            for metric in ['P', 'R', 'SU']:
+                _average[cutoff][metric] += stats[target_id][cutoff][metric] * weight(target_id) / num_entities
+
+    if 'P' in metrics and 'R' in metrics:
+        for cutoff in _average:
+            _average[cutoff]['F'] = fscore(precision=_average[cutoff]['P'], 
+                                           recall   =_average[cutoff]['R'])
+
+    stats[name] = _average
+
+def find_max_scores(stats):
+    '''
+    find max 'F' and max 'SU' and store P_at_best_F and R_at_best_F
+
+    :returns dict: max_scores[target_id][metric] = float
     '''
     max_scores = defaultdict(dict)
 
-    ## integrity check used below
-    at_least_some_scores = False
+    ## Store top F, SU for each target_id, which includes the special
+    ## values of "{micro,macro,weighted}_average" thereby appling the
+    ## same cutoff for all entities.
+    #for avg in ['micro_average', 'macro_average', 'weighted_average']:
+    for target_id in stats:
+        ## find the maximum F, and capture its underlying P and R
+        best_SU = 0
+        best_F = 0
+        P_at_best_F = 0
+        R_at_best_F = 0
+        for cutoff in stats[target_id]:
+            if stats[target_id][cutoff]['SU'] > best_SU:
+                best_SU = stats[target_id][cutoff]['SU']
+            if stats[target_id][cutoff]['F'] > best_F:
+                best_F = stats[target_id][cutoff]['F']
+                P_at_best_F = stats[target_id][cutoff]['P']
+                R_at_best_F = stats[target_id][cutoff]['R']
 
-    ## Store top F, SU for each target_id, which takes special value
-    ## of "average" thereby appling the same cutoff for all entities.
-    for target_id in Scores:
-        for metric in ['P', 'R', 'F', 'SU']:
-            if not Scores[target_id]:
-                max_scores[target_id][metric] = 0
-                continue
-            at_least_some_scores = True
-            max_scores[target_id][metric] =  \
-                max([Scores[target_id][cutoff][metric]
-                     for cutoff in Scores[target_id]])
-
-    if not Scores['average']:
-        if at_least_some_scores:
-            print 'how did we get no average when there are at_least_some_scores?'
-            sys.exit(json.dumps(Scores, indent=4, sort_keys=True))
-        else:
-            max_scores['average']['F_recomputed'] = 0
-    else:
-        max_scores['average']['F_recomputed'] = \
-            max([fscore(Scores['average'][cutoff]['P'], 
-                        Scores['average'][cutoff]['R'])
-                 for cutoff in Scores['average']])
+        max_scores[target_id]['SU'] = best_SU
+        max_scores[target_id]['F'] = best_F
+        max_scores[target_id]['P'] = P_at_best_F
+        max_scores[target_id]['R'] = R_at_best_F
 
     return max_scores
