@@ -25,7 +25,7 @@ The primary evaluation metric is for "vital" documents in the [Cumulative Citati
 |mean	   |0.188     | 0.214 |
 |min	   |0	      | 0.109 |
 
-<img src="plots/TREC-KBA-2013-CCR-vital+useful-P-R-F-scatter-plot.png?raw=true" alt="TREC-KBA-2013-CCR-vital-P-R-F-scatter-plot" style="width: 400px; height: 400px;" height="400px" width="400px" />
+<img src="plots/TREC-KBA-2013-CCR-vital-P-R-F-scatter-plot.png?raw=true" alt="TREC-KBA-2013-CCR-vital-P-R-F-scatter-plot" style="width: 400px; height: 400px;" height="400px" width="400px" />
 
 The hardest part of CCR is distinguishing between documents that are merely "useful" during the creation of an initial entity profile and those special "vital" documents that would change an already up-to-date profile.  By combining vital+useful as the filtering, the task gets easier:
 
