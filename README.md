@@ -33,7 +33,7 @@ preliminary score stats:
 
 <img src="plots/TREC-KBA-2013-CCR-vital+useful-P-R-F-scatter-plot.png?raw=true" alt="TREC-KBA-2013-CCR-vital+useful-P-R-F-scatter-plot" style="width: 200px; height: 200px;"/>
 
-
+foo
 
 max		 0.102578656	0.333333333
 median		 0.007291027	0.299056874
