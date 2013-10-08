@@ -31,7 +31,7 @@ preliminary score stats:
 |min	   |0	      |0.171 |
 
 
-![](plots//TREC-KBA-2013-CCR-vital+useful-P-R-F-scatter-plot.png?raw=true)
+<img src="plots/TREC-KBA-2013-CCR-vital+useful-P-R-F-scatter-plot.png?raw=true" alt="TREC-KBA-2013-CCR-vital+useful-P-R-F-scatter-plot" style="width: 200px;"/>
 
 
 
