@@ -15,13 +15,14 @@ preliminary score stats:
 (2) max(SU)
 ```
 
-
+<table><tr><td>
 |vital-only|(1)       |(2)    |
 |---------:|:---------|:------|
 |max	   |0.338     | 0.286 |
 |median	   |0.205     | 0.210 |
 |mean	   |0.188     | 0.214 |
 |min	   |0	      | 0.109 |
+</td><td><img src="plots/TREC-KBA-2013-CCR-vital+useful-P-R-F-scatter-plot.png?raw=true" alt="TREC-KBA-2013-CCR-vital+useful-P-R-F-scatter-plot" style="width: 200px; height: 200px;" height="400px" width="400px" /></td></tr></table>
 
 |vital+useful|(1)     |(2)   |
 |---------:|:---------|:-----|
@@ -31,9 +32,8 @@ preliminary score stats:
 |min	   |0	      |0.171 |
 
 
-<img src="plots/TREC-KBA-2013-CCR-vital+useful-P-R-F-scatter-plot.png?raw=true" alt="TREC-KBA-2013-CCR-vital+useful-P-R-F-scatter-plot" style="width: 200px; height: 200px;" height="400px" width="400px" />
 
-foo
+
 
 max		 0.102578656	0.333333333
 median		 0.007291027	0.299056874
