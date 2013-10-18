@@ -2,6 +2,7 @@
 tools for generating output plots and CSV files
 
 '''
+import os
 import csv
 import sys
 import math
@@ -91,6 +92,8 @@ def write_team_summary(mode, team_scores):
     path_to_write_csv: string with CSV file destination
     team_scores: dict, contains the F and SU for each run of each team
     '''
+    if not os.path.exists('overviews'):
+        os.makedirs('overviews')
     path = 'overviews/%s-run-overview.csv' % mode
     run_writer = csv.writer(open(path, 'wb'), delimiter=',')
     ## Write a header
