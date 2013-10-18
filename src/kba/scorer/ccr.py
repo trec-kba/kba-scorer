@@ -29,7 +29,7 @@ from collections import defaultdict
 from kba.scorer._metrics import compile_and_average_performance_metrics, find_max_scores
 from kba.scorer._outputs import write_team_summary, write_graph, write_performance_metrics, log
 
-def build_confusion_matrix(path_to_run_file, annotation, cutoff_step, unannotated_is_TN, include_training, debug):
+def build_confusion_matrix(path_to_run_file, annotation, cutoff_step, unannotated_is_TN, include_training, debug, thresh=2):
     '''
     This function generates the confusion matrix (number of true/false positives
     and true/false negatives.  
@@ -80,6 +80,11 @@ def build_confusion_matrix(path_to_run_file, annotation, cutoff_step, unannotate
         assert -1 <= rating <= 2
         row[5] = rating
 
+        #log('ratings:  %r <?> %r' % (rating, thresh))
+        if rating < thresh:
+            log('ignoring assertion below the rating threshold: %r < %r' % (rating, thresh))
+            continue
+
         assertion_key = (stream_id, target_id)
         if assertion_key in run_set:
             other_row = run_set[assertion_key]
@@ -91,7 +96,7 @@ def build_confusion_matrix(path_to_run_file, annotation, cutoff_step, unannotate
             if positives.get(target_id, 0) == 0:
                 #log('ignoring assertion on entity for which no CCR positives are known: %s' % target_id)
                 continue
-
+       
             if other_row[4] == conf:
                 ## compare rating level
                 if other_row[5] != rating:
@@ -196,7 +201,7 @@ def build_confusion_matrix(path_to_run_file, annotation, cutoff_step, unannotate
 
     return CM
     
-def load_annotation(path_to_annotation_file, include_useful, include_neutral, min_len_clean_visible, reject):
+def load_annotation(path_to_annotation_file, thresh, min_len_clean_visible, reject):
     '''
     Loads the annotation file into a dict
     
@@ -232,13 +237,6 @@ def load_annotation(path_to_annotation_file, include_useful, include_neutral, mi
        if reject(target_id):
            log('excluding truth data for %s' % target_id)
            continue
-
-       if include_neutral:
-           thresh = 0
-       elif include_useful:
-           thresh = 1
-       else:
-           thresh = 2
        
        ## Add the stream_id and target_id to a hashed dictionary
        ## 0 means that its not vital 1 means that it is vital
@@ -284,7 +282,7 @@ def make_description(args):
 
     return description
 
-def process_run(args, run_file_name, annotation, description):
+def process_run(args, run_file_name, annotation, description, thresh):
     '''
     compute scores and generate output files for a single run
     
@@ -295,6 +293,7 @@ def process_run(args, run_file_name, annotation, description):
     stats = build_confusion_matrix(
         os.path.join(args.run_dir, run_file_name) + '.gz',
         annotation, args.cutoff_step, args.unan_is_true, args.include_training,
+        thresh=thresh,
         debug=args.debug)
 
     compile_and_average_performance_metrics(stats)
@@ -325,8 +324,15 @@ def score_all_runs(args, description, reject):
     :param description: string used for file names
     :param reject: callable to rejects truth data
     '''
+    if args.include_neutral:
+        thresh = 0
+    elif args.include_useful:
+        thresh = 1
+    else:
+        thresh = 2
+
     ## Load in the annotation data
-    annotation = load_annotation(args.annotation, args.include_useful, args.include_neutral, 
+    annotation = load_annotation(args.annotation, thresh,
                                  args.min_len_clean_visible, reject)
     log( 'This assumes that all run file names end in .gz' )
 
@@ -347,7 +353,7 @@ def score_all_runs(args, description, reject):
         run_file_name = '.'.join(run_file.split('.')[:-1])
         log( 'processing: %s.gz' % run_file_name )
         
-        max_scores = process_run(args, run_file_name, annotation, description)
+        max_scores = process_run(args, run_file_name, annotation, description, thresh)
 
         ## split into team name and create stats file
         team_id, system_id = run_file_name.split('-')
