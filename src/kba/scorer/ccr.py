@@ -96,7 +96,7 @@ def build_confusion_matrix(path_to_run_file, annotation, cutoff_step, unannotate
             if positives.get(target_id, 0) == 0:
                 #log('ignoring assertion on entity for which no CCR positives are known: %s' % target_id)
                 continue
-       
+
             if other_row[4] == conf:
                 ## compare rating level
                 if other_row[5] != rating:
@@ -176,21 +176,24 @@ def build_confusion_matrix(path_to_run_file, annotation, cutoff_step, unannotate
     ## Correct FN for things in the annotation set that are NOT in the run
     ## First, calculate number of true things in the annotation set
     annotation_positives = defaultdict(int)
-    for key in annotation:
-        stream_id = key[0]
+    for stream_id, target_id in annotation:
         timestamp = int(stream_id.split('-')[0])
 
         if (not include_training) and (timestamp <= END_OF_FEB_2012):
             continue 
 
-        target_id = key[1]
         annotation_positives[target_id] += int(annotation[(stream_id,target_id)])
         
     for target_id in CM:
         for cutoff in CM[target_id]:
             ## Then subtract the number of TP at each cutoffs 
             ## (since FN+TP==True things in annotation set)
+            #log('annotation_positives[%s] = %d' % (target_id, annotation_positives[target_id]))
+            #log('CN[%s][cutoff=%d] = %r' % (target_id, cutoff, CM[target_id][cutoff]))
+
             CM[target_id][cutoff]['FN'] = annotation_positives[target_id] - CM[target_id][cutoff]['TP']
+
+            #log('CN[%s][cutoff=%d] = %r' % (target_id, cutoff, CM[target_id][cutoff]))
             assert annotation_positives[target_id] >= CM[target_id][cutoff]['TP'], \
                 "how did we get more TPs than available annotation_positives[target_id=%s] = %d >= %d = CM[target_id][cutoff=%f]['TP']" \
                 % (target_id, annotation_positives[target_id], CM[target_id][cutoff]['TP'], cutoff)
@@ -201,15 +204,23 @@ def build_confusion_matrix(path_to_run_file, annotation, cutoff_step, unannotate
 
     return CM
     
-def load_annotation(path_to_annotation_file, thresh, min_len_clean_visible, reject):
+def load_annotation(path_to_annotation_file, thresh, min_len_clean_visible, reject, require_positives=False):
     '''
     Loads the annotation file into a dict
     
     path_to_annotation_file: string filesystem path to the annotation file
     include_useful: true to include docs marked useful and vital
 
-    reject:  callable that returns boolean given a target_id
+    :param min_len_clean_visible: minimum length of the clean_visible,
+    which is in the 12 column of the expanded truth data file
+
+    :param reject:  callable that returns boolean given a target_id
+
+    :param require_positives: if set to True, reject any target entity
+    for which no true positives exist.
     '''
+    assert -1 <= thresh <= 2, thresh
+
     annotation_file = csv.reader(open(path_to_annotation_file, 'r'), delimiter='\t')
 
     annotation = dict()
@@ -221,6 +232,7 @@ def load_annotation(path_to_annotation_file, thresh, min_len_clean_visible, reje
        stream_id = row[2]
        target_id = row[3]
        rating = int(row[5])
+       assert -1 <= rating <=2, rating
 
        if len(row) == 12:
            ## only the later versions of the truth data carried this
@@ -237,17 +249,31 @@ def load_annotation(path_to_annotation_file, thresh, min_len_clean_visible, reje
        if reject(target_id):
            log('excluding truth data for %s' % target_id)
            continue
-       
+
        ## Add the stream_id and target_id to a hashed dictionary
        ## 0 means that its not vital 1 means that it is vital
               
        if (stream_id, target_id) in annotation:
-           ## 2 means the annotators gave it a yes for vitality
+           ## if rating is below threshold, then some assessor viewed
+           ## it as not good enough, so be conservative and downgrade
            if rating < thresh:
                 annotation[(stream_id, target_id)] = False
        else:
            ## store bool values in the annotation index
            annotation[(stream_id, target_id)] = rating >= thresh 
+
+    has_true = set()
+    for (stream_id, target_id), is_true in annotation.items():
+        if is_true:
+            has_true.add(target_id)
+
+    if require_positives:
+        for stream_id, target_id in annotation.keys():
+            if target_id not in has_true:
+                log('rejecting %s for lack of any true positives -- because require_positives=True' % target_id)
+                annotation.pop( (stream_id, target_id) )
+
+    log('%d target_ids have at least one true positive' % len(has_true))
 
     num_true = sum(map(int, annotation.values()))
     log('loaded annotation to create a dict of %d (stream_id, target_id) pairs with %d True' % (len(annotation), num_true))
@@ -274,9 +300,15 @@ def make_description(args):
     elif args.include_neutral:
         rating_types += '+neutral'
 
+    if args.require_positives:
+        req_pos = '-require-positives'
+    else:
+        req_pos = ''
+
     description = 'ccr' \
             + entities \
             + rating_types \
+            + req_pos \
             + '-cutoff-step-size-' \
             + str(args.cutoff_step)
 
@@ -333,7 +365,9 @@ def score_all_runs(args, description, reject):
 
     ## Load in the annotation data
     annotation = load_annotation(args.annotation, thresh,
-                                 args.min_len_clean_visible, reject)
+                                 args.min_len_clean_visible, reject,
+                                 require_positives=args.require_positives
+                                 )
     log( 'This assumes that all run file names end in .gz' )
 
     #import gc
@@ -379,6 +413,9 @@ if __name__ == '__main__':
     parser.add_argument(
         '--min-len-clean-visible', type=int, default=100, 
         help='minimum length of clean_visible content for a stream_id to be included in truth data')
+    parser.add_argument(
+        '--require-positives', default=False, action='store_true',
+        help='reject any target_id that has no true positive examples in the truth data')
     parser.add_argument(
         '--cutoff-step', type=int, default=50, dest = 'cutoff_step',
         help='step size used in computing scores tables and plots')
