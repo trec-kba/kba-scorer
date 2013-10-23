@@ -20,10 +20,10 @@ The primary evaluation metric is for "vital" documents in the [Cumulative Citati
 
 |vital-only|(1)       |(2)    | 
 |---------:|:---------|:------|
-|max	   |0.338     | 0.286 |
-|median	   |0.205     | 0.210 |
-|mean	   |0.188     | 0.214 |
-|min	   |0	      | 0.109 |
+|max	   |0.339     | 0.307 |
+|median	   |0.203     | 0.207 |
+|mean	   |0.184     | 0.214 |
+|min	   |0	      | 0     |
 
 <img src="plots/TREC-KBA-2013-CCR-vital-P-R-F-scatter-plot.png?raw=true" alt="TREC-KBA-2013-CCR-vital-P-R-F-scatter-plot" style="width: 400px; height: 400px;" height="400px" width="400px" />
 
@@ -31,9 +31,9 @@ The hardest part of CCR is distinguishing between documents that are merely "use
 
 |vital+useful|(1)     |(2)   |
 |---------:|:---------|:-----|
-|max	   |0.670     |0.575 |
-|median	   |0.440     |0.395 |
-|mean	   |0.388     |0.395 |
+|max	   |0.669     |0.575 |
+|median	   |0.456     |0.398 |
+|mean	   |0.385     |0.392 |
 |min	   |0	      |0.171 |
 
 <img src="plots/TREC-KBA-2013-CCR-vital+useful-P-R-F-scatter-plot.png?raw=true" alt="TREC-KBA-2013-CCR-vital+useful-P-R-F-scatter-plot" style="width: 400px; height: 400px;" height="400px" width="400px" />
