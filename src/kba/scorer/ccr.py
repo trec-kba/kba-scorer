@@ -204,7 +204,7 @@ def build_confusion_matrix(path_to_run_file, annotation, cutoff_step, unannotate
 
     return CM
     
-def load_annotation(path_to_annotation_file, thresh, min_len_clean_visible, reject, require_positives=False):
+def load_annotation(path_to_annotation_file, thresh, min_len_clean_visible, reject, require_positives=False, any_up=False):
     '''
     Loads the annotation file into a dict
     
@@ -256,8 +256,15 @@ def load_annotation(path_to_annotation_file, thresh, min_len_clean_visible, reje
        if (stream_id, target_id) in annotation:
            ## if rating is below threshold, then some assessor viewed
            ## it as not good enough, so be conservative and downgrade
-           if rating < thresh:
-                annotation[(stream_id, target_id)] = False
+           if not any_up and rating < thresh:
+               ## default any_up=False means that if *any* assessor
+               ## voted *against* the assertion, then *exclude* it
+               annotation[(stream_id, target_id)] = False
+
+           elif any_up and rating >= thresh:
+               ## any_up means that if *any* assessor voted *for* the
+               ## assertion, then *include* it
+               annotation[(stream_id, target_id)] = True
        else:
            ## store bool values in the annotation index
            annotation[(stream_id, target_id)] = rating >= thresh 
@@ -305,10 +312,16 @@ def make_description(args):
     else:
         req_pos = ''
 
+    if args.any_up:
+        any_up = '-any-up'
+    else:
+        any_up = ''
+
     description = 'ccr' \
             + entities \
             + rating_types \
             + req_pos \
+            + any_up \
             + '-cutoff-step-size-' \
             + str(args.cutoff_step)
 
@@ -440,6 +453,9 @@ if __name__ == '__main__':
     parser.add_argument(
         '--debug', default=False, action='store_true', dest='debug',
         help='print out debugging diagnostics')
+    parser.add_argument(
+        '--any-up', default=False, action='store_true', 
+        help='When identifying positive assertions in the training data, if *any* assessor voted *against* a (stream_id, target_id), then it is *removed* from the truth set by default.  If this flag is set, then the behavior is reversed:  if *any* assessor voted *for* an assertion, then it is *included*.')
     parser.add_argument(
         '--group', default=None,
         help='limit entities to this group')
