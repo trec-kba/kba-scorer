@@ -13,6 +13,7 @@ args = parser.parse_args()
 
 teams = defaultdict(set)
 
+#BIT-ECQ-ccr-all-entities-vital-microavg-cutoff-step-size-1.csv
 
 for fname in os.listdir(args.runs):
     if not (fname.endswith('png') or fname.endswith('csv')):
@@ -26,7 +27,10 @@ for fname in os.listdir(args.runs):
     teams[team_name].add(fname)
 
 for team_name, fnames in teams.items():
-    fh = zipfile.ZipFile(os.path.join(args.runs, '%s.zip' % team_name), 'w', zipfile.ZIP_DEFLATED)
+    zip_fpath = os.path.join(args.runs, '%s.zip' % team_name)
+    if os.path.exists(zip_fpath):
+        os.remove(zip_fpath)
+    fh = zipfile.ZipFile(zip_fpath, 'w', zipfile.ZIP_DEFLATED)
 
     for fname in fnames:
         fpath = os.path.join(args.runs, fname)
