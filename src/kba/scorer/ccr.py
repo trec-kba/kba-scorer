@@ -29,7 +29,7 @@ from collections import defaultdict
 from kba.scorer._metrics import compile_and_average_performance_metrics, find_max_scores
 from kba.scorer._outputs import write_team_summary, write_graph, write_performance_metrics, log
 
-def build_confusion_matrix(path_to_run_file, annotation, cutoff_step, unannotated_is_TN, include_training, debug, thresh=2):
+def build_confusion_matrix(path_to_run_file, annotation, cutoff_step, unannotated_is_TN, include_training, debug, thresh=2, require_positives=False):
     '''
     This function generates the confusion matrix (number of true/false positives
     and true/false negatives.  
@@ -56,9 +56,10 @@ def build_confusion_matrix(path_to_run_file, annotation, cutoff_step, unannotate
     ## count the total number of assertions per entity
     num_assertions = {}
 
-    positives = defaultdict(int)
-    for stream_id, target_id in annotation:
-        positives[target_id] += 1
+    num_positives = defaultdict(int)
+    for (stream_id, target_id), is_positive in annotation.items():
+        if is_positive:
+            num_positives[target_id] += 1
 
     ## Iterate through every row of the run and construct a
     ## de-duplicated run summary
@@ -85,16 +86,16 @@ def build_confusion_matrix(path_to_run_file, annotation, cutoff_step, unannotate
             log('ignoring assertion below the rating threshold: %r < %r' % (rating, thresh))
             continue
 
+        if require_positives and num_positives.get(target_id, 0) == 0:
+            log('ignoring assertion on entity for which no CCR positives are known: %s' % target_id)
+            continue
+
         assertion_key = (stream_id, target_id)
         if assertion_key in run_set:
             other_row = run_set[assertion_key]
             if other_row[4] > conf:
                 log('ignoring a duplicate row with lower conf: %d > %d'
                     % (other_row[4], conf))
-                continue
-
-            if positives.get(target_id, 0) == 0:
-                #log('ignoring assertion on entity for which no CCR positives are known: %s' % target_id)
                 continue
 
             if other_row[4] == conf:
@@ -198,9 +199,8 @@ def build_confusion_matrix(path_to_run_file, annotation, cutoff_step, unannotate
                 "how did we get more TPs than available annotation_positives[target_id=%s] = %d >= %d = CM[target_id][cutoff=%f]['TP']" \
                 % (target_id, annotation_positives[target_id], CM[target_id][cutoff]['TP'], cutoff)
 
-    if debug:
-        log( 'showing assertion counts:' )
-        log( json.dumps(num_assertions, indent=4, sort_keys=True) )
+    log( 'showing assertion counts:' )
+    log( json.dumps(num_assertions, indent=4, sort_keys=True) )
 
     return CM
     
@@ -339,6 +339,7 @@ def process_run(args, run_file_name, annotation, description, thresh):
         os.path.join(args.run_dir, run_file_name) + '.gz',
         annotation, args.cutoff_step, args.unan_is_true, args.include_training,
         thresh=thresh,
+        require_positives=args.require_positives,
         debug=args.debug)
 
     compile_and_average_performance_metrics(stats)
