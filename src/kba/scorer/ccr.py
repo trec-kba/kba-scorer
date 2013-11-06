@@ -58,8 +58,15 @@ def build_confusion_matrix(path_to_run_file, annotation, cutoff_step, unannotate
 
     num_positives = defaultdict(int)
     for (stream_id, target_id), is_positive in annotation.items():
+        ## compute total counts of number of positives for each target_id
         if is_positive:
             num_positives[target_id] += 1
+
+        ## make sure that the confusion matrix has entries for all entities
+        if target_id not in CM:
+            CM[target_id] = dict()
+            for cutoff in cutoffs:
+                CM[target_id][cutoff] = dict(TP=0, FP=0, FN=0, TN=0)     
 
     ## Iterate through every row of the run and construct a
     ## de-duplicated run summary
@@ -132,12 +139,6 @@ def build_confusion_matrix(path_to_run_file, annotation, cutoff_step, unannotate
             num_assertions[target_id]['in_TTR'] += 1
         else:
             num_assertions[target_id]['in_ETR'] += 1
-
-        ## If the entity has not been seen yet create a confusion matrix for it
-        if not target_id in CM:
-            CM[target_id] = dict()
-            for cutoff in cutoffs:
-                CM[target_id][cutoff] = dict(TP=0, FP=0, FN=0, TN=0)     
 
         if (not include_training) and (timestamp <= END_OF_FEB_2012):
             continue   

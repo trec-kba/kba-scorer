@@ -183,6 +183,15 @@ def score_confusion_matrix_DOCS(run_file_handle, annotation, positives,
     CM = {mode: defaultdict(lambda: defaultdict(init_confusion_matrix))
           for mode in MODES}
 
+    for stream_id in annotation:
+        for target_id in annotation[stream_id]:
+            for mode in MODES:
+                ## make sure that the confusion matrix has entries for all entities
+                if target_id not in CM[mode]:
+                    CM[mode][target_id] = dict()
+                    for cutoff in cutoffs:
+                        CM[mode][target_id][cutoff] = dict(TP=0, FP=0, FN=0, TN=0)
+
     ## count the total number of assertions per entity
     num_assertions = {}
 
