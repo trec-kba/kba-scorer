@@ -20,10 +20,10 @@ The primary evaluation metric is for "vital" documents in the [Cumulative Citati
 
 |vital-only|(1)       |(2)    | 
 |---------:|:---------|:------|
-|max	   |0.339     | 0.307 |
-|median	   |0.203     | 0.207 |
-|mean	   |0.184     | 0.214 |
-|min	   |0	      | 0     |
+|max	   |0.311     | 0.277 |
+|median	   |0.174     | 0.255 |
+|mean	   |0.166     | 0.137 |
+|min	   |0	      | 0.129 |
 
 <img src="plots/TREC-KBA-2013-CCR-vital-P-R-F-scatter-plot.png?raw=true" alt="TREC-KBA-2013-CCR-vital-P-R-F-scatter-plot" style="width: 400px; height: 400px;" height="400px" width="400px" />
 
@@ -31,10 +31,10 @@ The hardest part of CCR is distinguishing between documents that are merely "use
 
 |vital+useful|(1)     |(2)   |
 |---------:|:---------|:-----|
-|max	   |0.669     |0.575 |
-|median	   |0.456     |0.398 |
-|mean	   |0.385     |0.392 |
-|min	   |0	      |0.171 |
+|max	   |0.659     |0.570 |
+|median	   |0.406     |0.423 |
+|mean	   |0.376     |0.425 |
+|min	   |0	      |0.317 |
 
 <img src="plots/TREC-KBA-2013-CCR-vital+useful-P-R-F-scatter-plot.png?raw=true" alt="TREC-KBA-2013-CCR-vital+useful-P-R-F-scatter-plot" style="width: 400px; height: 400px;" height="400px" width="400px" />
 
@@ -43,9 +43,9 @@ For KBA 2013, we piloted a new task that requires systems to identify phrases in
 
 |SSF-DOCS|(1)     |(2)   |
 |---------:|:---------|:-----|
-|max	   |0.103     |0.333 |
-|median	   |0.007     |0.299 |
-|mean	   |0.028     |0.231 |
+|max	   |0.100     |0.333 |
+|median	   |0.005     |0.323 |
+|mean	   |0.026     |0.242 |
 |min	   |0	      |0.012 |
 
 <img src="plots/TREC-KBA-2013-SSF-DOCS-P-R-F-scatter-plot.png?raw=true" alt="TREC-KBA-2013-SSF-DOCS-P-R-F-scatter-plot" style="width: 400px; height: 400px;" height="400px" width="400px" />
@@ -55,10 +55,10 @@ The second of four stages in SSF diagostics considers *only* a run's true positi
 
 |SSF-OVERLAP|(1)     |(2)   |
 |---------:|:---------|:-----|
-|max	   |0.672     |0.670 |
-|median	   |0.095     |0.356 |
-|mean	   |0.174     |0.299 |
-|min	   |0	      |0     |
+|max	   |0.657     |0.663 |
+|median	   |0.005     |0.334 |
+|mean	   |0.101     |0.370 |
+|min	   |0	      |0.333 |
 
 <img src="plots/TREC-KBA-2013-SSF-OVERLAP-P-R-F-scatter-plot.png?raw=true" alt="TREC-KBA-2013-SSF-OVERLAP-P-R-F-scatter-plot" style="width: 400px; height: 400px;" height="400px" width="400px" />
 
@@ -66,10 +66,10 @@ The third of four stages in SSF diagostics considers *only* a run's true postivi
 
 |SSF-FILL|(1)     |(2)   |
 |---------:|:---------|:-----|
-|max	   |0.159     |0.359 |
-|median	   |0.0003    |0.311 |
-|mean	   |0.036     |0.231 |
-|min	   |0	      |0     |
+|max	   |0.155     |0.335 |
+|median	   |0.00005   |0.333 |
+|mean	   |0.026     |0.333 |
+|min	   |0	      |0.333 |
 
 <img src="plots/TREC-KBA-2013-SSF-FILL-P-R-F-scatter-plot.png?raw=true" alt="TREC-KBA-2013-SSF-FILL-P-R-F-scatter-plot" style="width: 400px; height: 400px;" height="400px" width="400px" />
 
@@ -77,9 +77,9 @@ The fourth of four stages in SSF diagnostics considers *only* a run's true posti
 
 |SSF-DATE_HOUR|(1)     |(2)   |
 |---------:|:---------|:-----|
-|max	   |0.720     |0.711 |
-|median	   |0.529     |0.469 |
-|mean	   |0.408     |0.390 |
+|max	   |0.682     |0.544 |
+|median	   |0.021     |0.021 |
+|mean	   |0.136     |0.113 |
 |min	   |0	      |0     |
 
 <img src="plots/TREC-KBA-2013-SSF-DATE_HOUR-P-R-F-scatter-plot.png?raw=true" alt="TREC-KBA-2013-SSF-DATE_HOUR-P-R-F-scatter-plot" style="width: 400px; height: 400px;" height="400px" width="400px" />
