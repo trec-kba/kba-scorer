@@ -35,7 +35,7 @@ def precision(TP, FP):
                      % (precision, TP, TP, FP))
         return precision
     else:
-        return 0.0
+        return 0.0  ## can get either 1.0 or 0.0, and 0 is more conservative
 
 def recall(TP, FN):
     '''
@@ -49,7 +49,7 @@ def recall(TP, FN):
                      % (recall, TP, TP, FN))
         return recall
     else:
-        return 0.0
+        return 0.0  ## can get either 1.0 or 0.0, and 0 is more conservative
 
 def fscore(precision=None, recall=None):
     '''
@@ -205,6 +205,7 @@ def _average(stats, metrics=['P', 'R', 'SU'], weight=lambda target_id: 1, name='
             continue
         for cutoff in stats[target_id]:
             for metric in ['P', 'R', 'SU']:
+                #print 'including in average: %r --> %r' % (target_id, stats[target_id][cutoff])
                 _average[cutoff][metric] += stats[target_id][cutoff][metric] * weight(target_id) / num_entities
 
     if 'P' in metrics and 'R' in metrics:
@@ -212,6 +213,7 @@ def _average(stats, metrics=['P', 'R', 'SU'], weight=lambda target_id: 1, name='
             _average[cutoff]['F'] = fscore(precision=_average[cutoff]['P'], 
                                            recall   =_average[cutoff]['R'])
 
+    print 'computed %s using num_entities=%d' % (name, num_entities)
     stats[name] = _average
 
 def find_max_scores(stats):

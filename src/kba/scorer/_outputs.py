@@ -17,7 +17,7 @@ except ImportError:
 
 def log(m):
     print m
-    sys.stdout.flush()
+    #sys.stdout.flush()
 
 def write_graph(path_to_write_graph, stats):
     '''

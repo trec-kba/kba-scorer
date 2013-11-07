@@ -19,9 +19,9 @@ slot_types = ['Affiliate', 'TopMembers', 'FoundedBy', 'Contact_Meet_Entity', 'As
 
 primary_commands = []
 commands = []
-ccr_template = "python -m  kba.scorer.ccr %s --cutoff-step %d ../../2013-kba-runs/ ../../trec-kba-ccr-judgments-2013-09-26-expanded-with-ssf-inferred-vitals-plus-len-clean_visible.before-and-after-cutoff.filter-run.txt >& logs/2013-kba-runs-ccr-%s.log"
+ccr_template = "(python -m  kba.scorer.ccr %s --cutoff-step %d ../../2013-kba-runs/ ../../trec-kba-ccr-judgments-2013-09-26-expanded-with-ssf-inferred-vitals-plus-len-clean_visible-corrected.before-and-after-cutoff.filter-run.txt | gzip ) >& logs/2013-kba-runs-ccr-%s.log.gz"
 
-ssf_template = "python -m  kba.scorer.ssf %s --cutoff-step %d ../../2013-kba-runs/ ../../trec-kba-ssf-target-events-2013-07-16-expanded-stream-ids.json &> logs/2013-kba-runs-ssf-%s.log"
+ssf_template = "(python -m  kba.scorer.ssf %s --cutoff-step %d ../../2013-kba-runs/ ../../trec-kba-ssf-target-events-2013-07-16-expanded-stream-ids.json | gzip ) &> logs/2013-kba-runs-ssf-%s.log.gz"
 
 avg_flag = ''
 
@@ -68,6 +68,8 @@ for reject_flag in ['', '--reject-wikipedia', '--reject-twitter']:
 step_size = 1
 cmd = ccr_template % ('', step_size, 'primary')
 commands.insert(0, cmd)
+cmd = ccr_template % (' --require-positiv ', step_size, 'primary-req-pos')
+commands.insert(0, cmd)
 cmd = ssf_template % ('', step_size, 'primary')
 commands.insert(0, cmd)
 cmd = ssf_template % (' --pooled-only ', step_size, 'primary-pooled-only')
@@ -90,7 +92,7 @@ def run(cmd):
 #pool.close()
 #pool.join()
 
-pool = multiprocessing.Pool(3, maxtasksperchild=1)
+pool = multiprocessing.Pool(8, maxtasksperchild=1)
 pool.map(run, commands)
 pool.close()
 pool.join()
