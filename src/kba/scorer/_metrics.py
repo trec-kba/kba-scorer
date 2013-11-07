@@ -148,11 +148,19 @@ def micro_average(stats):
     for target_id in stats:
         for cutoff in stats[target_id]:
             for metric in ['TP', 'FP', 'TN', 'FN']:
+
+                ## construct an entry called 'micro_average' in the
+                ## stats_summed dict that has the structure that we
+                ## have already built for each individual entity.
+                ## This combined entity-like data blob has a sum of
+                ## all the counts from the confusion matrix.
                 stats_summed['micro_average'][cutoff][metric] += stats[target_id][cutoff][metric]
 
-
+    ## compute P, R, F, SU from the confusion matrix
     compile_performance_metrics(stats_summed)
 
+    ## put this entity-like blob alongside all of the real entity
+    ## target_id strings in the stats dict
     stats['micro_average'] = stats_summed.pop('micro_average')
 
 
