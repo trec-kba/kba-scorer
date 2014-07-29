@@ -1,7 +1,7 @@
 '''
-This script generates scores for TREC KBA 2013 CCR, described here:
+This script generates scores for TREC KBA 2014 CCR, described here:
 
-   http://trec-kba.org/trec-kba-2013.shtml
+   http://trec-kba.org/trec-kba-2014/vital-filtering.shtml
 
 Direction questions & comments to the TREC KBA forums:
 http://groups.google.com/group/trec-kba
@@ -11,10 +11,8 @@ http://groups.google.com/group/trec-kba
 from __future__ import division
 
 __usage__ = '''
-python -m kba.score.ccr submissions trec-kba-ccr-judgments-2013-07-08.before-and-after-cutoff.filter-run.txt
+python -m kba.score.ccr submissions trec-kba-2014-07-15.after-cutoff.tsv
 '''
-
-END_OF_FEB_2012 = 1330559999
 
 import os
 import sys
@@ -24,18 +22,18 @@ import json
 import time
 import argparse
 from datetime import datetime
-from collections import defaultdict
+from collections import defaultdict, Counter
 
 from kba.scorer._metrics import compile_and_average_performance_metrics, find_max_scores
 from kba.scorer._outputs import write_team_summary, write_graph, write_performance_metrics, log
 
-def build_confusion_matrix(path_to_run_file, annotation, cutoff_step, unannotated_is_TN, include_training, debug, thresh=2, require_positives=False):
+def build_confusion_matrix(path_to_run_file, annotation, cutoff_step, unannotated_is_TN, include_training, debug, thresh=2, require_positives=0):
     '''
     This function generates the confusion matrix (number of true/false positives
     and true/false negatives.  
     
     path_to_run_file: str, a filesystem link to the run submission 
-    annotation: dict, containing the annotation data
+    annotation: dict, containing the annotation data from *after* the cutoff
     cutoff_step: int, increment between cutoffs
     unannotated_is_TN: boolean, true to count unannotated as negatives
     include_training: boolean, true to include training documents
@@ -93,7 +91,7 @@ def build_confusion_matrix(path_to_run_file, annotation, cutoff_step, unannotate
             log('ignoring assertion below the rating threshold: %r < %r' % (rating, thresh))
             continue
 
-        if require_positives and num_positives.get(target_id, 0) == 0:
+        if num_positives.get(target_id, 0) < require_positives:
             log('ignoring assertion on entity for which no CCR positives are known: %s' % target_id)
             continue
 
@@ -129,19 +127,12 @@ def build_confusion_matrix(path_to_run_file, annotation, cutoff_step, unannotate
 
         if target_id not in num_assertions:
             num_assertions[target_id] = {'total': 0,
-                                       'in_TTR': 0,
                                        'in_ETR': 0,
                                        'in_annotation_set': 0}
 
         ## keep track of total number of assertions per entity
         num_assertions[target_id]['total'] += 1
-        if timestamp <= END_OF_FEB_2012:
-            num_assertions[target_id]['in_TTR'] += 1
-        else:
-            num_assertions[target_id]['in_ETR'] += 1
-
-        if (not include_training) and (timestamp <= END_OF_FEB_2012):
-            continue   
+        num_assertions[target_id]['in_ETR'] += 1
         
         in_annotation_set = (stream_id, target_id) in annotation
 
@@ -180,9 +171,6 @@ def build_confusion_matrix(path_to_run_file, annotation, cutoff_step, unannotate
     annotation_positives = defaultdict(int)
     for stream_id, target_id in annotation:
         timestamp = int(stream_id.split('-')[0])
-
-        if (not include_training) and (timestamp <= END_OF_FEB_2012):
-            continue 
 
         annotation_positives[target_id] += int(annotation[(stream_id,target_id)])
         
@@ -266,19 +254,21 @@ def load_annotation(path_to_annotation_file, thresh, min_len_clean_visible, reje
                ## any_up means that if *any* assessor voted *for* the
                ## assertion, then *include* it
                annotation[(stream_id, target_id)] = True
+
        else:
            ## store bool values in the annotation index
            annotation[(stream_id, target_id)] = rating >= thresh 
 
-    has_true = set()
+    has_true = Counter()
     for (stream_id, target_id), is_true in annotation.items():
         if is_true:
-            has_true.add(target_id)
+            has_true[target_id] += 1
 
     if require_positives:
         for stream_id, target_id in annotation.keys():
-            if target_id not in has_true:
-                log('rejecting %s for lack of any true positives -- because require_positives=True' % target_id)
+            if has_true[target_id] < require_positives:
+                log('rejecting %s for too few true positives: %d < %d = require_positives'\
+                        % (target_id, has_true[target_id], require_positives))
                 annotation.pop( (stream_id, target_id) )
 
     log('%d target_ids have at least one true positive' % len(has_true))
@@ -309,7 +299,7 @@ def make_description(args):
         rating_types += '+neutral'
 
     if args.require_positives:
-        req_pos = '-require-positives'
+        req_pos = '-require-positives=%d' % args.require_positives
     else:
         req_pos = ''
 
@@ -381,7 +371,8 @@ def score_all_runs(args, description, reject):
     ## Load in the annotation data
     annotation = load_annotation(args.annotation, thresh,
                                  args.min_len_clean_visible, reject,
-                                 require_positives=args.require_positives
+                                 require_positives=args.require_positives,
+                                 any_up=args.any_up
                                  )
     log( 'This assumes that all run file names end in .gz' )
 
@@ -429,8 +420,8 @@ if __name__ == '__main__':
         '--min-len-clean-visible', type=int, default=100, 
         help='minimum length of clean_visible content for a stream_id to be included in truth data')
     parser.add_argument(
-        '--require-positives', default=False, action='store_true',
-        help='reject any target_id that has no true positive examples in the truth data')
+        '--require-positives', default=4, type=int, metavar='MIN_POSITIVES',
+        help='reject any target_id that has fewer than MIN_POSITIVES in its ETR')
     parser.add_argument(
         '--cutoff-step', type=int, default=50, dest = 'cutoff_step',
         help='step size used in computing scores tables and plots')
