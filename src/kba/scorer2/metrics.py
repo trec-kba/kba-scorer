@@ -1,4 +1,17 @@
+'''This script generates scores for TREC KBA 2014 SSF, described here:
+
+   http://trec-kba.org/trec-kba-2014/
+
+Direction questions & comments to the TREC KBA forums:
+http://groups.google.com/group/trec-kba
+
+.. This software is released under an MIT/X11 open source license.
+   Copyright 2014 Diffeo, Inc.
+
+'''
 import math
+
+available_metrics = ['sokalsneath', 'cosine', 'dot', 'c_TT']
 
 def get_metric_by_name(name):
     if name == 'sokalsneath':
@@ -7,8 +20,10 @@ def get_metric_by_name(name):
         return cosine
     elif name == 'dot':
         return dot
+    elif name == 'c_TT':
+        return c_TT
     else:
-        raise ProgrammingError('No such metric \'{}\''.format(name))
+        raise ProgrammingError("No such metric {}".format(name))
 
 def sokalsneath(sc1, sc2):
     '''
@@ -36,6 +51,16 @@ def sokalsneath(sc1, sc2):
         return 0.0
 
     return float(both) / (both + R)
+
+def c_TT(sc1, sc2):
+    '''
+    Count the number of keys in both sc1 and sc2
+    '''
+    both = 0
+    for key in sc1:
+        if key in sc2:
+            both += 1
+    return both
 
 def cosine(sc1, sc2):
     '''

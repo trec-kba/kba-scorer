@@ -1,22 +1,34 @@
+'''This script generates scores for TREC KBA 2014 SSF, described here:
+
+   http://trec-kba.org/trec-kba-2014/
+
+Direction questions & comments to the TREC KBA forums:
+http://groups.google.com/group/trec-kba
+
+.. This software is released under an MIT/X11 open source license.
+   Copyright 2014 Diffeo, Inc.
+
+'''
 from __future__ import absolute_import
 
 from collections import Counter as StringCounter
 from collections import defaultdict
 import csv
+import gzip
+import json
 import math
 import os
-import json
+from operator import itemgetter
+import sys
 import yaml
 
 from streamcorpus import Chunk
-from metrics import get_metric_by_name
+from kba.scorer2.metrics import get_metric_by_name, available_metrics
 
-#Where to locate the truth data.
-truth_data_path = '/home/josh/git/KBA/2014/judgments/trec-kba-2014-07-11-ccr-and-ssf.profiles.json'
-
-#Paths to runfile and streamitems directories.
-runfile_dir = '/home/josh/kba-scorer/src/kba/scorer_2/data'
-streamitems_dir = '/data/trec-kba/2014/trec-2014-run-submissions/ssf-stream-items'
+def log(m):
+    sys.stderr.write(m)
+    sys.stderr.write('\n')
+    sys.stderr.flush()
 
 class ComparableProfile(object):
     '''
@@ -25,7 +37,7 @@ class ComparableProfile(object):
     many of the same slot_names and for each slot_name similar values.
     '''
     
-    def __init__(self, profile_name, truncate_counts = True):
+    def __init__(self, profile_name, truncate_counts = False):
         self._profile_name = profile_name
 
         #slot_name -> StringCounter
@@ -97,12 +109,22 @@ def profiles_from_truthfile(truthfile_path):
 
 def profiles_from_runfile(runfile_path, offset_c_prepended = False, 
                           offset_inclusive = True,
-                          decode_utf = False):
+                          decode_utf = False,
+                          streamitems_dir = None,
+                          max_lines = None,
+                          ):
+
     '''
     Returns a dictionary mappping from entity-name to ComparableProfile, where the
     ComparableProfiles are constructed from a runfile.
     '''
-    runfile = open(runfile_path, 'r')
+    runfile = gzip.open(runfile_path, 'r')
+    filter_run = runfile.readline()
+    assert filter_run.startswith('#')
+    filter_run = json.loads(filter_run[1:])
+    if filter_run['task_id'] != 'kba-ssf-2014':
+        # do nothing
+        return
 
     runfile_profiles = dict()
     runfile_csv = csv.reader(runfile, delimiter='\t')
@@ -114,7 +136,7 @@ def profiles_from_runfile(runfile_path, offset_c_prepended = False,
         if row[0].startswith('#'):
             continue
 
-        if count > 1000:
+        if max_lines is not None and count > max_lines:
             break
 
         count += 1
@@ -137,7 +159,7 @@ def profiles_from_runfile(runfile_path, offset_c_prepended = False,
             #if there is no 'c' prepended, we also know that there is one offset.
             offsets = [offset_str]
 
-        print '{}: fetching stream item: {}'.format(runfile_path, stream_item)
+        log( '{}: fetching stream item: {}'.format(runfile_path, stream_item) )
 
         #The chunk files are located two levels deep in a directory hierarchy, where each
         #level is 2 character prefix of the stream-id.
@@ -184,9 +206,9 @@ def profiles_from_runfile(runfile_path, offset_c_prepended = False,
             try:
                 slot_value_processed = slot_value_processed.decode('utf-8')
             except UnicodeDecodeError:
-                print 'Warning: Could not decode slot_value: {}. Will skip decoding process.'.format(slot_value_processed)
+                log( 'Warning: Could not decode slot_value: {}. Will skip decoding process.'.format(slot_value_processed) )
 
-        print slot_value_processed
+        log(slot_value_processed)
 
         #we want the bag-of-words associated with this slot_value
         for value in slot_value_processed.split():
@@ -194,24 +216,17 @@ def profiles_from_runfile(runfile_path, offset_c_prepended = False,
 
     return runfile_profiles
 
-def runfiles():
-    '''
-    Yields runfiles located within the runfile_dir
-    '''
-    for root, dirs, files in os.walk(runfile_dir):
-        for runfile in files:
-            yield runfile
 
-        #do not want to recurse down the path.
-        break
-
-def score_run(runfile_path, truth_profiles, config, metric_name='cosine'):
+def score_run(runfile_path, truth_profiles, config, streamitems_dir=None, max_lines=None, metric_name='cosine'):
     '''
     Score a runfile by going through all its discovered entity profiles and
     comparing them to the corresponding truth profiles.
     '''
     #load profiles from the corresponding runfile
-    runfile_profiles = profiles_from_runfile(runfile_path, **config)
+    runfile_profiles = profiles_from_runfile(runfile_path, streamitems_dir=streamitems_dir, 
+                                             max_lines=max_lines, **config)
+    if not runfile_profiles:
+        return
 
     #score the runfile-profiles against the truth-profiles.
     score_sum = 0.0
@@ -229,15 +244,15 @@ configs deal with options that handle the idiosyncrasies of the
 different runfiles.
 '''
 configs = {
-    'BUPT_PRIS-ssf1': dict(
+    'BUPT_PRIS-ssf1.gz': dict(
         offset_inclusive=False,
         decode_utf=True
     ),
-    'BUPT_PRIS-ssf2': dict(
+    'BUPT_PRIS-ssf2.gz': dict(
         offset_inclusive=False,
         decode_utf=True,
     ),
-    'ecnu-ssf_run': dict(
+    'ecnu-ssf_run.gz': dict(
         offset_inclusive=False,
         decode_utf=True,
         offset_c_prepended=True,
@@ -254,17 +269,40 @@ def get_config_by_name(name):
         return dict()
 
 if __name__ == '__main__':
+    import argparse
+    parser = argparse.ArgumentParser()
+    parser.add_argument('truth_data_path', default='~/KBA/2014/judgments/trec-kba-2014-07-11-ccr-and-ssf.profiles.json')
+    parser.add_argument('runfile_dir', default='~/trec-kba-2014-run-submissions')
+    parser.add_argument('streamitems_dir', default='~/trec-kba-2014-ssf-stream-items')
+    parser.add_argument('--metric', default='all')
+    parser.add_argument('--max-lines', default=None, type=int)
+    args = parser.parse_args()
 
     #load truth-data
-    truth_profiles = profiles_from_truthfile(truth_data_path)
+    truth_profiles = profiles_from_truthfile(args.truth_data_path)
 
     #calculate scores of runfiles
     scores = dict()
-    for runfile in runfiles():
-        score = score_run(runfile_dir+'/'+runfile, 
-                          truth_profiles, 
-                          get_config_by_name(runfile), 
-                          metric_name='cosine')
-        scores[runfile] = score
 
-    print scores
+    if args.metric == 'all':
+        metrics = available_metrics
+    else:
+        if args.metric not in available_metrics:
+            sys.exit('{} not in available_metrics={!r}'.format(args.metric, available_metrics))
+        metrics = [args.metric]
+
+    for metric in metrics:
+        for runfile in os.listdir(args.runfile_dir):
+            if not runfile.endswith('.gz'): continue
+            score = score_run(os.path.join(args.runfile_dir, runfile), 
+                              truth_profiles, 
+                              get_config_by_name(runfile), 
+                              streamitems_dir=args.streamitems_dir,
+                              max_lines=args.max_lines,
+                              metric_name=metric)
+            if score is not None:
+                scores[runfile] = score
+
+        print '\n\nusing the {} metric:'.format(metric)
+        for runfile, score in sorted(scores.items(), key=itemgetter(1), reverse=True):
+            print '\t{}\t{}'.format(runfile, score)
