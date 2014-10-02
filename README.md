@@ -3,6 +3,22 @@ kba-scorer
 
 scoring tools for TREC KBA
 
+scorer2
+-------
+
+To run the ssf scorer in scorer2:
+
+```
+  $ python -m kba.scorer2.ssf /path/to/truth-data.json /path/to/run-submissions-dir/ /path/to/stream-items-dir/ --metric [all|sokalsneath|cosine|dot] --max-lines n 2> log > scores.txt &
+```
+
+This command will score each runfile located in /path/to/run-submissions-dir/, using the truth data located in /path/to/truth-data.json, by accessing the stream items in /path/to/stream-items-dir/ to extract the slot-fills. The command takes a couple of arguments: --metric lets you select among \[all, sokalsneath, cosine, dot\], --max-lines n is optional and lets you only reads the first n lines from the runfiles. You will then find logging information in log, and your scores in scores.txt, in the current working directory. This command may take a long time, as it must reach into the stream items in /path/to/stream-items-dir/ in order to extract the slot-fills.
+
+A runfile is evaluated by building a profile from its slot fills over time, and then comparing this profile with the profile generated from the truth data. Profiles are compared on a slot-by-slot basis. For each slot, we compare the token counts in that slot-fill with the token counts in the slot-fill in the truth data. The method of comparison between two slots is controlled by the --metric option. For example, if we use the dot metric, we compute the dot-product of the token counts for the two slot-fills. A larger score means a better overlap between the slot-fills.
+
+scorer
+------
+
 ```
   $ cd src 
   $ python -m  kba.scorer.ccr --include-useful --cutoff-step 1 ../../2013-kba-runs/ ../data/trec-kba-ccr-judgments-2013-09-26-expanded-with-ssf-inferred-vitals-plus-len-clean_visible.before-and-after-cutoff.filter-run.txt >& 2013-kba-runs-ccr-include-useful.log &
