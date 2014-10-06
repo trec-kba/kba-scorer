@@ -19,6 +19,7 @@ import json
 import math
 import os
 from operator import itemgetter
+import pickle
 import sys
 import yaml
 
@@ -171,10 +172,16 @@ def profiles_from_runfile(runfile_path, offset_c_prepended = False,
         if match is None:
             raise Exception("Cannot read StreamItem for {}".format(stream_item))
 
-        stream_item_file = streamitems_dir+'/{}/{}/{}.sc.xz.gpg'.format(
+        stream_item_path = '{}/{}/{}.sc.xz.gpg'.format(
             match.group(1),
             match.group(2),
             stream_item)
+
+        stream_item_file = os.path.join(streamitems_dir, stream_item_path)
+
+        if not os.path.isfile(stream_item_file):
+            log('Could not find stream item {}'.format(stream_item))
+            continue
 
         c = Chunk(stream_item_file)
 
@@ -206,9 +213,10 @@ def profiles_from_runfile(runfile_path, offset_c_prepended = False,
             try:
                 slot_value_processed = slot_value_processed.decode('utf-8')
             except UnicodeDecodeError:
-                log( 'Warning: Could not decode slot_value: {}. Will skip decoding process.'.format(slot_value_processed) )
+                log( 'Warning: Could not decode slot_value: {}. Will skip slot-fill.'.format(slot_value_processed))
+                continue
 
-        log(slot_value_processed)
+        log(slot_value_processed.encode('utf-8'))
 
         #we want the bag-of-words associated with this slot_value
         for value in slot_value_processed.split():
@@ -217,17 +225,11 @@ def profiles_from_runfile(runfile_path, offset_c_prepended = False,
     return runfile_profiles
 
 
-def score_run(runfile_path, truth_profiles, config, streamitems_dir=None, max_lines=None, metric_name='cosine'):
+def score_run(runfile_profiles, truth_profiles, metric_name='cosine'):
     '''
     Score a runfile by going through all its discovered entity profiles and
     comparing them to the corresponding truth profiles.
     '''
-    #load profiles from the corresponding runfile
-    runfile_profiles = profiles_from_runfile(runfile_path, streamitems_dir=streamitems_dir, 
-                                             max_lines=max_lines, **config)
-    if not runfile_profiles:
-        return
-
     #score the runfile-profiles against the truth-profiles.
     score_sum = 0.0
     for entity in runfile_profiles.keys():
@@ -268,6 +270,7 @@ def get_config_by_name(name):
     else:
         return dict()
 
+
 if __name__ == '__main__':
     import argparse
     parser = argparse.ArgumentParser()
@@ -281,9 +284,6 @@ if __name__ == '__main__':
     #load truth-data
     truth_profiles = profiles_from_truthfile(args.truth_data_path)
 
-    #calculate scores of runfiles
-    scores = dict()
-
     if args.metric == 'all':
         metrics = available_metrics
     else:
@@ -291,18 +291,34 @@ if __name__ == '__main__':
             sys.exit('{} not in available_metrics={!r}'.format(args.metric, available_metrics))
         metrics = [args.metric]
 
-    for metric in metrics:
-        for runfile in os.listdir(args.runfile_dir):
-            if not runfile.endswith('.gz'): continue
-            score = score_run(os.path.join(args.runfile_dir, runfile), 
-                              truth_profiles, 
-                              get_config_by_name(runfile), 
-                              streamitems_dir=args.streamitems_dir,
-                              max_lines=args.max_lines,
-                              metric_name=metric)
-            if score is not None:
-                scores[runfile] = score
+    
+    #mapping from metric name to a mapping from runfile name to score
+    metric_to_scores = defaultdict(dict)
+    for runfile in os.listdir(args.runfile_dir):
+        if not runfile.endswith('.gz'): continue
 
+        runfile_config = get_config_by_name(runfile)
+
+        runfile_profiles = profiles_from_runfile(os.path.join(args.runfile_dir, runfile), 
+                                                 streamitems_dir=args.streamitems_dir,
+                                                 max_lines = args.max_lines,
+                                                 **runfile_config)
+
+        if not runfile_profiles:
+            continue
+
+        #collect scores for each metric
+        for metric in metrics:
+            score = score_run(runfile_profiles,
+                              truth_profiles, 
+                              metric_name=metric)
+
+            if score is not None:
+                metric_to_scores[metric][runfile] = score
+
+    #print out results
+    for metric,scores in metric_to_scores.items():
         print '\n\nusing the {} metric:'.format(metric)
-        for runfile, score in sorted(scores.items(), key=itemgetter(1), reverse=True):
+        scores = sorted(scores.items(), key=itemgetter(1), reverse=True)
+        for runfile,score in scores:
             print '\t{}\t{}'.format(runfile, score)
