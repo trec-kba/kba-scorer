@@ -49,6 +49,8 @@ makeplot_SU <- function(myfile, name, ylabel){
 ## read the macro_average_SU column out of the CSV
 v_SU  = makeplot_SU(file_v,  '', expression(max(log(SU))))
 
+library(scales)
+
 makeplot_PRF <- function(myfile, name) {
   #% A Precision/Recall/F plot
   z <- matrix(nrow=100, ncol=100)
@@ -69,7 +71,7 @@ makeplot_PRF <- function(myfile, name) {
 
   ## ggplot2 needs a dataframe, so convert it and rescale the x,y data
   ## to be between zero and one
-  df <- melt(z, varnames=c("p", "r"), value.name="f")
+  df <- melt(z, varnames=c("p", "r")) #, value.name="f")
   df <- transform(df, p=rescale(p, to=c(0,1)))
   df <- transform(df, r=rescale(r, to=c(0,1)))
 

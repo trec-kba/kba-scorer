@@ -5,6 +5,7 @@ library(ggplot2)
 library(stringr)
 library(lattice)
 library(reshape2)
+library(scales)
 
 options(echo=TRUE) # if you want see commands in output file
 args <- commandArgs(trailingOnly = TRUE)
@@ -75,7 +76,7 @@ makeplot_PRF <- function(myfile, name) {
 
   ## ggplot2 needs a dataframe, so convert it and rescale the x,y data
   ## to be between zero and one
-  df <- melt(z, varnames=c("p", "r"), value.name="f")
+  df <- melt(z, varnames=c("p", "r"), name="f")
   df <- transform(df, p=rescale(p, to=c(0,1)))
   df <- transform(df, r=rescale(r, to=c(0,1)))
 
@@ -83,7 +84,7 @@ makeplot_PRF <- function(myfile, name) {
   #print(df)
   
   ## this combines two plots, and returns it
-    g <- ggplot(main=name) +
+    g <- ggplot(main=name,  color=Legend, group=Legend) +
       opts(title = name) +
       stat_contour(data=df, aes(x=p, y=r, z=value)) + 
       geom_point(data=cs, aes(x=macro_average_P, y=macro_average_R))

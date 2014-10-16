@@ -469,7 +469,7 @@ if __name__ == '__main__':
             sys.exit('must specify --topics-path to use --group')
         targets = json.load(open(args.topics_path))['targets']
         for targ in targets:
-            if targ['group'] == args.group or targ['entity_type'] == args.entity_type:
+            if ('group' in targ and targ.get('group') == args.group) or targ['entity_type'] == args.entity_type:
                 accepted_target_ids.add(targ['target_id'])
     
     description = make_description(args)
