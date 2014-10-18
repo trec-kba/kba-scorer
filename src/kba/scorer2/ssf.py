@@ -18,6 +18,7 @@ import gzip
 import json
 import math
 import os
+import re
 from operator import itemgetter
 import pickle
 import sys
@@ -162,11 +163,18 @@ def profiles_from_runfile(runfile_path, offset_c_prepended = False,
 
         log( '{}: fetching stream item: {}'.format(runfile_path, stream_item) )
 
-        #The chunk files are located two levels deep in a directory hierarchy, where each
-        #level is 2 character prefix of the stream-id.
-        #We are going to extract the first 4 characters of the stream-id in chunks of 2,
-        #so we can find the corresponding StreamItem on the filesystem.
-        import re
+        ## The chunk files are located two levels deep in a directory
+        ## hierarchy, where each level is 2 character prefix of the
+        ## stream-id.  We are going to extract the first 4 characters
+        ## of the stream-id in chunks of 2, so we can find the
+        ## corresponding StreamItem on the filesystem.  For example,
+        ## the StreamItem with id
+        ## 1234567890-abcdef0123456789abcdef0123456789 would be stored
+        ## in a single-item chunk file called
+        ## ./ab/cd/1234567890-abcdef0123456789abcdef0123456789.sc and
+        ## the further file extensions of .xz or .xz.gpg are optional,
+        ## because the streamcorpus python package handles that for
+        ## us.
         match = re.match('.*-(..)(..).*', stream_item)
 
         if match is None:
@@ -177,13 +185,13 @@ def profiles_from_runfile(runfile_path, offset_c_prepended = False,
             match.group(2),
             stream_item)
 
-        stream_item_file = os.path.join(streamitems_dir, stream_item_path)
+        stream_item_file_path = os.path.join(streamitems_dir, stream_item_path)
 
-        if not os.path.isfile(stream_item_file):
+        if not os.path.isfile(stream_item_file_path):
             log('Could not find stream item {}'.format(stream_item))
             continue
 
-        c = Chunk(stream_item_file)
+        c = Chunk(stream_item_file_path)
 
         si = [si for si in c][0] #collect the single si in this chunk
 
