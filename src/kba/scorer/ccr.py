@@ -193,9 +193,8 @@ def build_confusion_matrix(path_to_run_file, annotation, cutoff_step, unannotate
 
     return CM
     
-def load_annotation(path_to_annotation_file, thresh, min_len_clean_visible, reject, require_positives=False, any_up=False):
-    '''
-    Loads the annotation file into a dict
+def load_annotation(path_to_annotation_file, thresh, min_len_clean_visible, reject, require_positives=False, any_up=False, restricted_entity_list=None):
+    '''Loads the annotation file into a dict
     
     path_to_annotation_file: string filesystem path to the annotation file
     include_useful: true to include docs marked useful and vital
@@ -207,6 +206,10 @@ def load_annotation(path_to_annotation_file, thresh, min_len_clean_visible, reje
 
     :param require_positives: if set to True, reject any target entity
     for which no true positives exist.
+
+    :param restricted_entity_list: a list of target_id strings that
+    are the only ones allowed in the annotation.
+
     '''
     assert -1 <= thresh <= 2, thresh
 
@@ -237,6 +240,10 @@ def load_annotation(path_to_annotation_file, thresh, min_len_clean_visible, reje
 
        if reject(target_id):
            log('excluding truth data for %s' % target_id)
+           continue
+
+       if restricted_entity_list and target_id not in restricted_entity_list:
+           log('not in restricted_entity_list: %s' % target_id)
            continue
 
        ## Add the stream_id and target_id to a hashed dictionary
@@ -308,8 +315,14 @@ def make_description(args):
     else:
         any_up = ''
 
+    if args.entity_type:
+        entity_type = '-' + args.entity_type
+    else:
+        entity_type = ''
+
     description = 'ccr' \
             + entities \
+            + entity_type \
             + rating_types \
             + req_pos \
             + any_up \
@@ -372,7 +385,8 @@ def score_all_runs(args, description, reject):
     annotation = load_annotation(args.annotation, thresh,
                                  args.min_len_clean_visible, reject,
                                  require_positives=args.require_positives,
-                                 any_up=args.any_up
+                                 any_up=args.any_up,
+                                 restricted_entity_list=args.restricted_entity_list,
                                  )
     log( 'This assumes that all run file names end in .gz' )
 
@@ -461,6 +475,9 @@ if __name__ == '__main__':
     parser.add_argument(
         '--run-name-filter', default=None,
         help='beginning of string of filename to filter runs that get considered')
+    parser.add_argument(
+        '--restricted-entity-list', default=None,
+        help='text file with one target_id per line, only these entities will be used in truth data')
     args = parser.parse_args()
 
     accepted_target_ids = set()
@@ -472,6 +489,12 @@ if __name__ == '__main__':
             if ('group' in targ and targ.get('group') == args.group) or targ['entity_type'] == args.entity_type:
                 accepted_target_ids.add(targ['target_id'])
     
+    if args.restricted_entity_list:
+        args.restricted_entity_list = set(open(args.restricted_entity_list).read().splitlines())
+        log('loaded %d entities into restricted_entity_list:\n%s' % 
+            (len(args.restricted_entity_list),
+             '\n'.join(args.restricted_entity_list)))
+
     description = make_description(args)
 
     ## construct reject callable
