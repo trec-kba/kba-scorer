@@ -82,7 +82,8 @@ makeplot_PRF <- function(myfile, name) {
     g <- ggplot() +
       opts(title = name) +
       stat_contour(data=df, aes(x=p, y=r, z=value)) + 
-      geom_point(data=cs, aes(x=macro_average_P, y=macro_average_R))
+          geom_point(data=cs, aes(x=macro_average_P, y=macro_average_R, color=factor(team_id), shape=factor(team_id))) +
+              scale_shape_manual(values=1:20)
 
   return(g)
 }
