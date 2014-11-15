@@ -61,19 +61,18 @@ class ComparableProfile(object):
         else:
             self._slots[slot_name][slot_value] += 1
 
-    def compare(self, other, metric_name='cosine'):
+    def compare(self, other, scores):
         '''
         Return the comparison function applied between this profile and the other
         ComparableProfile.
         '''
-        metric = get_metric_by_name(metric_name)
+        for metric_name in scores:
+            metric = get_metric_by_name(metric_name)
 
-        score_sum = 0.0
-        for slot_name, slot_value in self._slots.iteritems():
-            other_slot_value = other._slots[slot_name] #defaults to empty StringCounter
-            score_sum += metric(slot_value, other_slot_value)
+            for slot_name, slot_value in self._slots.iteritems():
+                other_slot_value = other._slots[slot_name] #defaults to empty StringCounter
+                scores[metric_name] += metric(slot_value, other_slot_value)
 
-        return score_sum
 
 def profiles_from_truthfile(truthfile_path):
     '''
@@ -225,21 +224,20 @@ def profiles_from_runfile(runfile_path, offset_c_prepended = False,
     return runfile_profiles
 
 
-def score_run(runfile_profiles, truth_profiles, metric_name='cosine'):
+def score_run(runfile_profiles, truth_profiles, scores):
     '''
     Score a runfile by going through all its discovered entity profiles and
     comparing them to the corresponding truth profiles.
+
+    `scores` must be a dictionary with keys that are `metric_names`
     '''
     #score the runfile-profiles against the truth-profiles.
-    score_sum = 0.0
     for entity in runfile_profiles.keys():
         #get profiles to compare
         runfile_profile = runfile_profiles[entity]
         truth_profile = truth_profiles[entity]
-        
-        score_sum += truth_profile.compare(runfile_profile, metric_name=metric_name)
+        truth_profile.compare(runfile_profile, scores)
 
-    return score_sum
 
 '''
 configs deal with options that handle the idiosyncrasies of the
@@ -255,6 +253,16 @@ configs = {
         decode_utf=True,
     ),
     'ecnu-ssf_run.gz': dict(
+        offset_inclusive=False,
+        decode_utf=True,
+        offset_c_prepended=True,
+    ),
+    'baseline-ssf.gz': dict(
+        offset_inclusive=False,
+        decode_utf=True,
+        offset_c_prepended=True,
+    ),
+    'baseline-ssf_oracle.gz': dict(
         offset_inclusive=False,
         decode_utf=True,
         offset_c_prepended=True,
@@ -308,17 +316,18 @@ if __name__ == '__main__':
             continue
 
         #collect scores for each metric
-        for metric in metrics:
-            score = score_run(runfile_profiles,
-                              truth_profiles, 
-                              metric_name=metric)
+        scores = {metric: 0.0 for metric in metrics}
+        score_run(runfile_profiles,
+                  truth_profiles, 
+                  scores)
 
-            if score is not None:
-                metric_to_scores[metric][runfile] = score
+        for metric_name, score in scores.items():
+            metric_to_scores[metric_name][runfile] = score
 
     #print out results
-    for metric,scores in metric_to_scores.items():
+    for metric, scores in metric_to_scores.items():
         print '\n\nusing the {} metric:'.format(metric)
+        print '\t{}'.format(metric)
         scores = sorted(scores.items(), key=itemgetter(1), reverse=True)
-        for runfile,score in scores:
-            print '\t{}\t{}'.format(runfile, score)
+        for runfile, score in scores:
+            print '{}\t{}'.format(runfile.split('.')[0], score)
