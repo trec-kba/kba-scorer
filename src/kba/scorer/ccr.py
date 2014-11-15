@@ -406,12 +406,18 @@ def score_all_runs(args, description, reject):
         ## take the name without the .gz
         run_file_name = '.'.join(run_file.split('.')[:-1])
         log( 'processing: %s.gz' % run_file_name )
-        
-        max_scores = process_run(args, run_file_name, annotation, description, thresh)
+    
+        try:
+            max_scores = process_run(args, run_file_name, annotation, description, thresh)
 
-        ## split into team name and create stats file
-        team_id, system_id = run_file_name.split('-')
-        team_scores[team_id][system_id] = max_scores
+            ## split into team name and create stats file
+            team_id, system_id = run_file_name.split('-')
+            team_scores[team_id][system_id] = max_scores
+
+        except Exception, exc:
+            logger.critical('died on %s', run_file_name, exc_info=True)
+            sys.exit(str(exc))
+
 
         #gc.collect()
         #log(str(hp.heap()))
