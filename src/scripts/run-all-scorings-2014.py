@@ -12,7 +12,10 @@ targets = json.load(open('../../KBA/2014/judgments/trec-kba-2014-10-15-ccr-and-s
 step_size = 1
 primary_commands = []
 commands = []
-ccr_template = "(python -m  kba.scorer.ccr %s --cutoff-step %d --any-up --require-positives=4 /data/trec-kba/2014/trec-2014-run-submissions/ ../../KBA/2014/judgments/trec-kba-2014-10-15-ccr-and-ssf.before-and-after-cutoff.tsv | gzip ) >& logs/2014-runs-ccr-%s.log.gz"
+ccr_template = "(python -m  kba.scorer.ccr %s --cutoff-step %d --any-up --require-positives=4 --restrict ../../KBA/2014/judgments/ttr-possessing-entities.txt /data/trec-kba/2014/trec-kba-2014-run-submissions/ ../../KBA/2014/judgments/trec-kba-2014-10-15-ccr-and-ssf.after-cutoff.tsv | gzip ) >& logs/2014-runs-ccr-%s.log.gz"
+
+## without restrictions and before-and-after-cutoff
+#ccr_template = "(python -m  kba.scorer.ccr %s --cutoff-step %d --any-up --require-positives=4 /data/trec-kba/2014/trec-kba-2014-run-submissions/ ../../KBA/2014/judgments/trec-kba-2014-10-15-ccr-and-ssf.before-and-after-cutoff.tsv | gzip ) >& logs/2014-runs-ccr-%s.log.gz"
 
 #ssf_template = "(python -m  kba.scorer2.ssf %s --cutoff-step %d ../../2013-kba-runs/ ../../trec-kba-ssf-target-events-2013-07-16-expanded-stream-ids.json | gzip ) &> logs/2013-kba-runs-ssf-%s.log.gz"
 
@@ -36,7 +39,12 @@ for entity_type in ['PER', 'ORG', 'FAC']:
 
 cmd = ccr_template % ('', step_size, 'primary')
 commands.insert(0, cmd)
-cmd = ccr_template % (' --require-positiv ', step_size, 'primary-req-pos')
+cmd = ccr_template % (' --require-positives=4 ', step_size, 'primary-req-pos')
+commands.insert(0, cmd)
+
+cmd = ccr_template % (' --include-useful ', step_size, 'primary')
+commands.insert(0, cmd)
+cmd = ccr_template % (' --include-useful --require-positives=4 ', step_size, 'primary-req-pos')
 commands.insert(0, cmd)
 
 #cmd = ssf_template % ('', step_size, 'primary')

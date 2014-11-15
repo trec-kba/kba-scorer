@@ -1,4 +1,7 @@
 pairs = '''ccr-all-entities-vital-require-positives=4-any-up-cutoff-step-size-1-run-overview.csv,ccr-all-entities-vital+useful-require-positives=4-any-up-cutoff-step-size-1-run-overview.csv
+ccr-all-entities-PER-vital-require-positives=4-any-up-cutoff-step-size-1-run-overview.csv,ccr-all-entities-PER-vital+useful-require-positives=4-any-up-cutoff-step-size-1-run-overview.csv
+ccr-all-entities-ORG-vital-require-positives=4-any-up-cutoff-step-size-1-run-overview.csv,ccr-all-entities-ORG-vital+useful-require-positives=4-any-up-cutoff-step-size-1-run-overview.csv
+ccr-all-entities-FAC-vital-require-positives=4-any-up-cutoff-step-size-1-run-overview.csv,ccr-all-entities-FAC-vital+useful-require-positives=4-any-up-cutoff-step-size-1-run-overview.csv
 '''
 
 import os, sys

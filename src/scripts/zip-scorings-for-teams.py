@@ -34,8 +34,8 @@ for fname in os.listdir(args.runs):
         run = gzip.open(os.path.join(args.runs, fname))
         run = run.readline()
         run = json.loads(run[1:])
-        POC[team_name].add(run['poc_email'])
-        print run['poc_email']
+        POC[team_name].add('%s <%s>' % (run['poc_name'], run['poc_email']))
+        print run['poc_name'], run['poc_email']
 
     if fname.endswith('png') or fname.endswith('csv'):
         teams[team_name].add(fname)
