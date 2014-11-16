@@ -215,7 +215,7 @@ def profiles_from_runfile(runfile_path, offset_c_prepended = False,
                 log( 'Warning: Could not decode slot_value: {}. Will skip slot-fill.'.format(slot_value_processed))
                 continue
 
-        log(slot_value_processed.encode('utf-8'))
+        log('## %s %s: %s' % (profile_name, slot_name, slot_value_processed.encode('utf-8')))
 
         #we want the bag-of-words associated with this slot_value
         for value in slot_value_processed.split():
